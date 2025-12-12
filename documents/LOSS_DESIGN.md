@@ -5,7 +5,7 @@
 本文档详细介绍了为超分辨率训练设计和实现的三种损失函数：
 1. **L2Loss**：标准的均方误差损失
 2. **FocalFrequencyLoss**：频域感知损失（ICCV 2021）
-3. **StatisticalFeatureLoss**：局部统计特征感知损失（原创设计）
+3. **LPIPSLoss**：感知损失（Learned Perceptual Image Patch Similarity）
 
 ---
 
@@ -181,102 +181,98 @@ loss = criterion(pred, target)
 
 ---
 
-## 3. StatisticalFeatureLoss（局部统计特征感知损失）
+## 3. LPIPSLoss（感知损失）
 
 ### 3.1 设计动机
 
-超分辨率任务不仅需要恢复像素级的细节，还需要保持图像的统计特征分布。本损失函数是**原创设计**，通过比较预测图像和目标图像在局部区域的统计特征，来确保重建图像在统计意义上与真实图像相似。
+LPIPS（Learned Perceptual Image Patch Similarity）是一种基于深度学习的感知相似性度量，它使用预训练的CNN网络提取特征，然后计算特征之间的距离作为感知损失。这种损失更符合人眼视觉感知，能够更好地捕捉图像的细节和纹理特征。
 
 **核心观察：**
-1. 自然图像在局部区域具有特定的统计分布特性
-2. 高质量的超分辨率结果应该保持这些统计特性
-3. 统计特征能够捕捉纹理和结构信息，补充像素级损失的不足
+1. 人类视觉系统对图像的感知基于多层特征表示
+2. 深度CNN网络的中间层特征能够很好地模拟人类感知
+3. 特征空间的距离比像素空间的距离更能反映感知差异
 
 ### 3.2 理论基础
 
-我们计算以下四种统计特征：
+#### 3.2.1 感知特征提取
 
-#### 3.2.1 均值（Mean）- 一阶矩
-
-$$
-\mu(x, y) = \frac{1}{|W|} \sum_{(i,j) \in W(x,y)} I(i,j)
-$$
-
-**物理意义：** 局部亮度
-
-#### 3.2.2 方差（Variance）- 二阶中心矩
+我们使用预训练的CNN网络（如VGG、AlexNet等）提取多层特征：
 
 $$
-\sigma^2(x, y) = \frac{1}{|W|} \sum_{(i,j) \in W(x,y)} (I(i,j) - \mu(x,y))^2
+\{F_l(I)\}_{l=1}^{L}
 $$
 
-**物理意义：** 局部对比度
+其中：
+- $I$ 是输入图像
+- $F_l$ 是第 $l$ 层的特征提取函数
+- $L$ 是使用的特征层总数
 
-#### 3.2.3 偏度（Skewness）- 三阶中心矩
+#### 3.2.2 通道线性缩放
 
-$$
-S(x, y) = \frac{1}{|W|} \sum_{(i,j) \in W(x,y)} \left(\frac{I(i,j) - \mu(x,y)}{\sigma(x,y)}\right)^3
-$$
-
-**物理意义：** 分布的不对称性
-- $S > 0$：右偏（长尾在右侧，暗区域多）
-- $S < 0$：左偏（长尾在左侧，亮区域多）
-- $S = 0$：对称分布
-
-#### 3.2.4 峰度（Kurtosis）- 四阶中心矩
+为了学习每个特征通道的重要性，我们对每个通道引入可学习的缩放因子：
 
 $$
-K(x, y) = \frac{1}{|W|} \sum_{(i,j) \in W(x,y)} \left(\frac{I(i,j) - \mu(x,y)}{\sigma(x,y)}\right)^4
+\hat{F}_l(I) = W_l \odot F_l(I)
 $$
 
-**物理意义：** 分布的尖锐程度
-- $K > 3$：尖峰分布（边缘清晰）
-- $K = 3$：正态分布
-- $K < 3$：平峰分布（边缘模糊）
+其中：
+- $W_l$ 是第 $l$ 层的可学习缩放向量
+- $\odot$ 表示逐元素乘法
+
+#### 3.2.3 感知距离计算
+
+LPIPS通过计算特征之间的加权欧氏距离来衡量感知差异：
+
+$$
+d_{LPIPS}(I_0, I_1) = \sum_l \|\hat{F}_l(I_0) - \hat{F}_l(I_1)\|_2^2
+$$
 
 ### 3.3 损失函数定义
 
 **总损失：**
 
 $$
-\mathcal{L}_{stat} = \frac{1}{|S| \cdot |F|} \sum_{s \in S} \sum_{f \in F} \frac{||f_{pred}^s - f_{target}^s||_1}{||f_{target}^s||_1 + \epsilon}
+\mathcal{L}_{LPIPS} = \sum_l \sum_{c=1}^{C_l} w_{l,c} \|F_{l,c}(I_{pred}) - F_{l,c}(I_{target})\|_2^2
 $$
 
 其中：
-- $S$ 是窗口尺度集合（如 {3, 5, 7}）
-- $F$ 是统计特征集合（如 {mean, variance, skewness, kurtosis}）
-- $f^s$ 表示在尺度 $s$ 下计算的统计特征
+- $l$ 是特征层索引
+- $c$ 是通道索引
+- $C_l$ 是第 $l$ 层的通道数
+- $w_{l,c}$ 是第 $l$ 层第 $c$ 通道的可学习权重
 
-### 3.4 创新点
+### 3.4 实现特点
 
-1. **多尺度统计特征**
-   - 在不同窗口大小（3×3, 5×5, 7×7等）上计算统计特征
-   - 捕捉不同尺度的纹理信息
+1. **多层特征融合**
+   - 使用多个网络层（从浅层到深层）的特征
+   - 浅层捕捉低级特征（边缘、纹理）
+   - 深层捕捉高级特征（语义、结构）
 
-2. **高阶矩匹配**
-   - 不仅匹配均值和方差（常见做法）
-   - 还匹配偏度和峰度（罕见但有效）
-   - 确保分布形状的相似性
+2. **通道感知加权**
+   - 不同通道对感知的贡献不同
+   - 通过学习确定权重，而非人工设定
 
-3. **纹理一致性保证**
-   - 统计特征能够表征纹理的复杂度和规律性
-   - 避免生成统计上不自然的纹理
+3. **预训练网络利用**
+   - 利用在大规模数据集（如ImageNet）上预训练的网络
+   - 无需从头开始训练特征提取器
 
-4. **自适应归一化**
-   - 使用相对误差而非绝对误差
-   - 对不同亮度和对比度的区域公平对待
+4. **网络选择灵活性**
+   - 支持多种预训练网络（AlexNet、VGG、SqueezeNet）
+   - 可根据计算资源和精度需求选择
 
-### 3.5 实现特点
+### 3.5 实现示例
 
 ```python
-class StatisticalFeatureLoss(nn.Module):
+class LPIPSLoss(nn.Module):
     def __init__(
         self,
         loss_weight: float = 1.0,
-        window_sizes: List[int] = [3, 5, 7],
-        use_mean: bool = True,
-        use_variance: bool = True,
-        use_skewness: bool = True,
+        net_type: str = 'alex',  # 'alex', 'vgg', 'squeeze'
+        layers: Optional[List[str]] = None,
+        use_dropout: bool = False,
+        eval_mode: bool = True,
+        spatial: bool = False
+    ):
         use_kurtosis: bool = True,
         normalize: bool = True,
         reduction: str = 'mean'
@@ -284,34 +280,27 @@ class StatisticalFeatureLoss(nn.Module):
 ```
 
 **技术细节：**
-- 使用高斯窗口进行加权统计（而非均匀窗口）
-- 通过卷积操作高效计算局部统计量
-- 支持灵活的特征组合
+- 使用预训练的CNN网络（如AlexNet、VGG、SqueezeNet）提取特征
+- 对每个特征通道学习独立的权重
+- 支持空间模式和非空间模式的感知距离计算
 
 ### 3.6 使用示例
 
 ```python
-from SR.losses import StatisticalFeatureLoss
+from SR.losses import LPIPSLoss
 
-# 完整配置（推荐）
-criterion = StatisticalFeatureLoss(
-    loss_weight=0.5,
-    window_sizes=[3, 5, 7],
-    use_mean=True,
-    use_variance=True,
-    use_skewness=True,
-    use_kurtosis=True,
-    normalize=True
+# 使用AlexNet（推荐，计算效率高）
+criterion = LPIPSLoss(
+    loss_weight=1.0,
+    net_type='alex',
+    eval_mode=True
 )
 
-# 轻量配置（仅使用低阶矩）
-criterion = StatisticalFeatureLoss(
-    loss_weight=0.5,
-    window_sizes=[5],
-    use_mean=True,
-    use_variance=True,
-    use_skewness=False,
-    use_kurtosis=False
+# 使用VGG（更高精度，但计算量大）
+criterion = LPIPSLoss(
+    loss_weight=1.0,
+    net_type='vgg',
+    eval_mode=True
 )
 
 # 计算损失
@@ -322,13 +311,10 @@ loss = criterion(pred, target)
 
 | 参数 | 推荐值 | 说明 |
 |------|--------|------|
-| `loss_weight` | 0.3-0.7 | 统计损失可以作为主要损失之一 |
-| `window_sizes` | [3, 5, 7] | 多尺度捕捉不同层次的纹理 |
-| `use_mean` | True | 基础特征，建议启用 |
-| `use_variance` | True | 对比度信息，建议启用 |
-| `use_skewness` | True | 高阶特征，提升纹理质量 |
-| `use_kurtosis` | True | 高阶特征，提升边缘清晰度 |
-| `normalize` | True | 使用相对误差，更稳定 |
+| `loss_weight` | 0.1-0.5 | 感知损失通常作为辅助损失使用 |
+| `net_type` | 'alex' | 平衡精度和效率的首选 |
+| `eval_mode` | True | 确保特征提取器稳定 |
+| `spatial` | False | 默认使用全局感知距离 |
 
 ### 3.8 理论优势
 
@@ -361,7 +347,7 @@ loss = criterion(pred, target)
 **标准配置（平衡质量和速度）：**
 
 ```python
-from SR.losses import L2Loss, FocalFrequencyLoss, StatisticalFeatureLoss
+from SR.losses import L2Loss, FocalFrequencyLoss, LPIPSLoss
 
 # 创建损失函数
 l2_loss = L2Loss(loss_weight=1.0)
@@ -370,13 +356,9 @@ freq_loss = FocalFrequencyLoss(
     alpha=1.0,
     patch_factor=1
 )
-stat_loss = StatisticalFeatureLoss(
+lpips_loss = LPIPSLoss(
     loss_weight=0.5,
-    window_sizes=[3, 5, 7],
-    use_mean=True,
-    use_variance=True,
-    use_skewness=True,
-    use_kurtosis=True
+    net_type='alex'
 )
 
 # 训练循环
@@ -386,15 +368,15 @@ def train_step(model, lr_image, hr_image):
     # 计算各项损失
     loss_l2 = l2_loss(pred, hr_image)
     loss_freq = freq_loss(pred, hr_image)
-    loss_stat = stat_loss(pred, hr_image)
+    loss_lpips = lpips_loss(pred, hr_image)
     
     # 总损失
-    total_loss = loss_l2 + loss_freq + loss_stat
+    total_loss = loss_l2 + loss_freq + loss_lpips
     
     return total_loss, {
         'l2': loss_l2.item(),
         'freq': loss_freq.item(),
-        'stat': loss_stat.item(),
+        'lpips': loss_lpips.item(),
         'total': total_loss.item()
     }
 ```
@@ -410,12 +392,9 @@ freq_loss = FocalFrequencyLoss(
     ave_spectrum=True,
     log_matrix=True
 )
-stat_loss = StatisticalFeatureLoss(
+lpips_loss = LPIPSLoss(
     loss_weight=0.7,
-    window_sizes=[3, 5, 7, 9],
-    use_mean=True,
-    use_variance=True,
-    use_skewness=True,
+    net_type='vgg'  # 使用更高精度的VGG网络
     use_kurtosis=True
 )
 ```
@@ -429,13 +408,9 @@ freq_loss = FocalFrequencyLoss(
     alpha=1.0,
     patch_factor=1
 )
-stat_loss = StatisticalFeatureLoss(
+lpips_loss = LPIPSLoss(
     loss_weight=0.3,
-    window_sizes=[5],
-    use_mean=True,
-    use_variance=True,
-    use_skewness=False,
-    use_kurtosis=False
+    net_type='alex'
 )
 ```
 
@@ -448,35 +423,35 @@ stat_loss = StatisticalFeatureLoss(
 epoch < 50:
     l2_weight = 1.0
     freq_weight = 0.05
-    stat_weight = 0.2
+    lpips_weight = 0.2
 
 # 训练中期：平衡各项损失
 50 <= epoch < 150:
     l2_weight = 1.0
     freq_weight = 0.1
-    stat_weight = 0.5
+    lpips_weight = 0.5
 
 # 训练后期：关注细节和纹理
 epoch >= 150:
     l2_weight = 0.8
     freq_weight = 0.15
-    stat_weight = 0.7
+    lpips_weight = 0.7
 ```
 
 ### 4.3 性能对比
 
 根据测试结果（batch_size=4, channels=3）：
 
-| 分辨率 | L2 Loss | Freq Loss | Stat Loss | 总计 |
-|--------|---------|-----------|-----------|------|
-| 64×64  | 0.03 ms | 0.84 ms   | 11.61 ms  | 12.48 ms |
-| 128×128| 0.04 ms | 2.12 ms   | 29.06 ms  | 31.22 ms |
+| 分辨率 | L2 Loss | Freq Loss | LPIPS Loss | 总计 |
+|--------|---------|-----------|------------|------|
+| 64×64  | 0.03 ms | 0.84 ms   | 12.45 ms   | 13.32 ms |
+| 128×128| 0.04 ms | 2.12 ms   | 31.22 ms   | 33.38 ms |
 | 256×256| 0.15 ms | 10.92 ms  | 143.38 ms | 154.45 ms |
 
 **性能建议：**
 - L2Loss：几乎无开销，始终启用
 - FocalFrequencyLoss：开销适中，推荐启用
-- StatisticalFeatureLoss：开销较大，可根据需求调整窗口数量
+- LPIPSLoss：计算开销适中，可通过选择不同网络类型平衡精度和效率
 
 ---
 
@@ -488,8 +463,8 @@ epoch >= 150:
 
 1. **基线：** 仅使用L2Loss
 2. **+频域：** L2Loss + FocalFrequencyLoss
-3. **+统计：** L2Loss + StatisticalFeatureLoss
-4. **完整：** L2Loss + FocalFrequencyLoss + StatisticalFeatureLoss
+3. **+感知：** L2Loss + LPIPSLoss
+4. **完整：** L2Loss + FocalFrequencyLoss + LPIPSLoss
 
 ### 5.2 评估指标
 
@@ -506,7 +481,7 @@ epoch >= 150:
 |---------|------|------|-------|-----|---------|
 | L2Loss  | +++  | ++   | +     | +   | +       |
 | +Freq   | +++  | +++  | ++    | ++  | ++      |
-| +Stat   | +++  | +++  | +++   | +++ | +++     |
+| +LPIPS  | +++  | +++  | +++   | +++ | +++     |
 
 ---
 
@@ -523,26 +498,26 @@ epoch >= 150:
   3.3 损失函数设计
     3.3.1 像素级重建损失（L2Loss）
     3.3.2 频域感知损失（FocalFrequencyLoss）
-    3.3.3 局部统计特征感知损失（StatisticalFeatureLoss）★
+    3.3.3 感知损失（LPIPSLoss）★
   3.4 训练策略
 ```
 
-### 6.2 StatisticalFeatureLoss的论文描述
+### 6.2 LPIPSLoss的论文描述
 
 **建议写法：**
 
-> **局部统计特征感知损失**
+> **感知损失（LPIPS）**
 > 
-> 为了确保重建图像在统计意义上与真实图像相似，我们提出了局部统计特征感知损失（Statistical Feature Loss）。该损失函数通过比较预测图像和目标图像在局部区域的统计特征来衡量重建质量。
+> 为了更好地对齐人类视觉感知，我们采用了感知损失（Learned Perceptual Image Patch Similarity, LPIPS）。该损失函数使用预训练的CNN网络提取多层特征，然后计算特征之间的加权距离。
 > 
-> 具体而言，我们在多个尺度的局部窗口中计算四种统计量：均值（一阶矩）、方差（二阶中心矩）、偏度（三阶中心矩）和峰度（四阶中心矩）。这些统计量分别表征了局部亮度、对比度、分布不对称性和尖锐程度。
+> 具体而言，我们使用预训练的AlexNet/VGG网络作为特征提取器，从多个网络层（conv1_1, conv2_1, conv3_1等）提取特征。对于每个特征通道，我们学习独立的权重参数，以反映不同通道对感知的重要性。
 > 
 > 损失函数定义为：
-> $$\mathcal{L}_{stat} = \frac{1}{|S| \cdot |F|} \sum_{s \in S} \sum_{f \in F} \frac{||f_{pred}^s - f_{target}^s||_1}{||f_{target}^s||_1 + \epsilon}$$
+> $$\mathcal{L}_{LPIPS} = \sum_l \sum_{c=1}^{C_l} w_{l,c} \|F_{l,c}(I_{pred}) - F_{l,c}(I_{target})\|_2^2$$
 > 
-> 其中$S$是窗口尺度集合，$F$是统计特征集合。通过使用相对误差而非绝对误差，该损失函数能够对不同亮度和对比度的区域公平对待。
+> 其中$l$是特征层索引，$c$是通道索引，$C_l$是第$l$层的通道数，$w_{l,c}$是第$l$层第$c$通道的可学习权重。
 > 
-> 相比传统的像素级损失，统计特征损失能够更好地保持图像的纹理真实性和分布特性，避免过度平滑的问题。
+> 相比传统的像素级损失，LPIPS能够更好地捕捉人类视觉感知关注的细节和纹理，使重建图像在主观质量上更接近真实图像。
 
 ### 6.3 创新点总结
 
@@ -568,7 +543,7 @@ epoch >= 150:
 
 1. **L2Loss**：提供基础的像素级重建质量
 2. **FocalFrequencyLoss**：增强频域细节和纹理
-3. **StatisticalFeatureLoss**：保持统计分布和纹理真实性
+3. **LPIPSLoss**：对齐人类视觉感知，提升主观质量
 
 通过合理组合这三种损失函数，可以在保证基础重建质量的同时，显著提升细节恢复和纹理真实性。
 

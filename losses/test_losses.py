@@ -4,7 +4,7 @@
 测试所有实现的损失函数：
 1. L2Loss
 2. FocalFrequencyLoss
-3. StatisticalFeatureLoss
+3. LPIPSLoss
 """
 
 import torch
@@ -14,7 +14,7 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from SR.losses import L2Loss, FocalFrequencyLoss, StatisticalFeatureLoss
+from SR.losses import L2Loss, FocalFrequencyLoss, LPIPSLoss
 
 
 def test_l2_loss():
@@ -111,21 +111,17 @@ def test_focal_frequency_loss():
     print("\n✓ FocalFrequencyLoss 测试通过")
 
 
-def test_statistical_feature_loss():
-    """测试统计特征损失"""
+def test_lpips_loss():
+    """测试感知损失（LPIPS）"""
     print("\n" + "=" * 70)
-    print("测试 StatisticalFeatureLoss")
+    print("测试 LPIPSLoss")
     print("=" * 70)
     
     # 创建损失函数
-    criterion = StatisticalFeatureLoss(
+    criterion = LPIPSLoss(
         loss_weight=1.0,
-        window_sizes=[3, 5, 7],
-        use_mean=True,
-        use_variance=True,
-        use_skewness=True,
-        use_kurtosis=True,
-        normalize=True
+        net_type='alex',  # 'alex', 'vgg', 'squeeze'
+        spatial=False
     )
     print(f"\n损失函数: {criterion}")
     
@@ -145,47 +141,21 @@ def test_statistical_feature_loss():
     print(f"梯度形状: {pred.grad.shape}")
     print(f"梯度范围: [{pred.grad.min().item():.6f}, {pred.grad.max().item():.6f}]")
     
-    # 测试不同统计特征组合
-    print("\n测试不同统计特征组合:")
-    feature_configs = [
-        {'use_mean': True, 'use_variance': False, 'use_skewness': False, 'use_kurtosis': False},
-        {'use_mean': True, 'use_variance': True, 'use_skewness': False, 'use_kurtosis': False},
-        {'use_mean': True, 'use_variance': True, 'use_skewness': True, 'use_kurtosis': False},
-        {'use_mean': True, 'use_variance': True, 'use_skewness': True, 'use_kurtosis': True},
-    ]
+    # 测试不同网络类型
+    print("\n测试不同网络类型:")
+    net_types = ['alex', 'vgg', 'squeeze']
+    for net_type in net_types:
+        try:
+            criterion_net = LPIPSLoss(
+                loss_weight=1.0,
+                net_type=net_type
+            )
+            loss_net = criterion_net(pred, target)
+            print(f"  网络类型 {net_type}: 损失={loss_net.item():.6f}")
+        except Exception as e:
+            print(f"  网络类型 {net_type}: 错误={str(e)}")
     
-    for i, config in enumerate(feature_configs):
-        criterion_config = StatisticalFeatureLoss(
-            loss_weight=1.0,
-            window_sizes=[5],
-            **config
-        )
-        loss_config = criterion_config(pred, target)
-        features = [k for k, v in config.items() if v]
-        print(f"  配置 {i+1} {features}: 损失={loss_config.item():.6f}")
-    
-    # 测试不同窗口大小
-    print("\n测试不同窗口大小:")
-    window_configs = [
-        [3],
-        [5],
-        [7],
-        [3, 5],
-        [3, 5, 7],
-        [3, 5, 7, 9],
-    ]
-    
-    for windows in window_configs:
-        criterion_window = StatisticalFeatureLoss(
-            loss_weight=1.0,
-            window_sizes=windows,
-            use_mean=True,
-            use_variance=True
-        )
-        loss_window = criterion_window(pred, target)
-        print(f"  窗口大小 {windows}: 损失={loss_window.item():.6f}")
-    
-    print("\n✓ StatisticalFeatureLoss 测试通过")
+    print("\n✓ LPIPSLoss 测试通过")
 
 
 def test_combined_loss():
@@ -197,19 +167,12 @@ def test_combined_loss():
     # 创建所有损失函数
     l2_loss = L2Loss(loss_weight=1.0)
     freq_loss = FocalFrequencyLoss(loss_weight=0.1, alpha=1.0)
-    stat_loss = StatisticalFeatureLoss(
-        loss_weight=0.5,
-        window_sizes=[3, 5, 7],
-        use_mean=True,
-        use_variance=True,
-        use_skewness=True,
-        use_kurtosis=True
-    )
+    lpips_loss = LPIPSLoss(loss_weight=0.5, net_type='alex')
     
     print("\n损失函数配置:")
     print(f"  L2Loss: weight=1.0")
     print(f"  FocalFrequencyLoss: weight=0.1")
-    print(f"  StatisticalFeatureLoss: weight=0.5")
+    print(f"  LPIPSLoss: weight=0.5")
     
     # 测试数据
     pred = torch.randn(2, 3, 128, 128, requires_grad=True)
@@ -218,16 +181,16 @@ def test_combined_loss():
     # 计算各个损失
     loss_l2 = l2_loss(pred, target)
     loss_freq = freq_loss(pred, target)
-    loss_stat = stat_loss(pred, target)
+    loss_lpips = lpips_loss(pred, target)
     
     # 总损失
-    total_loss = loss_l2 + loss_freq + loss_stat
+    total_loss = loss_l2 + loss_freq + loss_lpips
     
     print(f"\n输入形状: pred={pred.shape}, target={target.shape}")
     print(f"\n各项损失值:")
     print(f"  L2 Loss: {loss_l2.item():.6f}")
     print(f"  Frequency Loss: {loss_freq.item():.6f}")
-    print(f"  Statistical Loss: {loss_stat.item():.6f}")
+    print(f"  LPIPS Loss: {loss_lpips.item():.6f}")
     print(f"  Total Loss: {total_loss.item():.6f}")
     
     # 测试梯度
@@ -252,14 +215,14 @@ def test_performance():
     # 创建损失函数
     l2_loss = L2Loss()
     freq_loss = FocalFrequencyLoss(loss_weight=0.1)
-    stat_loss = StatisticalFeatureLoss(loss_weight=0.5, window_sizes=[3, 5, 7])
+    lpips_loss = LPIPSLoss(loss_weight=0.5, net_type='alex')
     
     # 测试不同分辨率
     resolutions = [64, 128, 256]
     num_iterations = 100
     
     print(f"\n测试配置: batch_size=4, channels=3, iterations={num_iterations}")
-    print(f"\n{'分辨率':<10} {'L2 Loss':<15} {'Freq Loss':<15} {'Stat Loss':<15}")
+    print(f"\n{'分辨率':<10} {'L2 Loss':<15} {'Freq Loss':<15} {'LPIPS Loss':<15}")
     print("-" * 60)
     
     for res in resolutions:
@@ -278,13 +241,13 @@ def test_performance():
             _ = freq_loss(pred, target)
         time_freq = (time.time() - start) / num_iterations * 1000
         
-        # Statistical Loss
+        # LPIPS Loss
         start = time.time()
         for _ in range(num_iterations):
-            _ = stat_loss(pred, target)
-        time_stat = (time.time() - start) / num_iterations * 1000
+            _ = lpips_loss(pred, target)
+        time_lpips = (time.time() - start) / num_iterations * 1000
         
-        print(f"{res}x{res:<6} {time_l2:<15.3f} {time_freq:<15.3f} {time_stat:<15.3f} ms")
+        print(f"{res}x{res:<6} {time_l2:<15.3f} {time_freq:<15.3f} {time_lpips:<15.3f} ms")
     
     print("\n✓ 性能测试完成")
 
@@ -302,7 +265,7 @@ def main():
         # 测试各个损失函数
         test_l2_loss()
         test_focal_frequency_loss()
-        test_statistical_feature_loss()
+        test_lpips_loss()
         test_combined_loss()
         test_performance()
         

@@ -158,9 +158,9 @@ loss:
   freq_weight: 0.1
   freq_alpha: 1.0  # FocalFrequencyLoss的alpha参数
   
-  # 统计特征损失
-  stat_weight: 0.1
-  stat_window_sizes: [3, 5, 7]  # 多尺度窗口
+  # LPIPS感知损失
+  lpips_weight: 0.1
+  lpips_net_type: 'alex'  # 可选: 'alex', 'vgg', 'squeeze'
 
 # ============================================================================
 # 优化器设置

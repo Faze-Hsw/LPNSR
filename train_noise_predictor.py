@@ -46,7 +46,7 @@ from SR.models.unet import UNetModelSwin
 from SR.ldm.models.autoencoder import VQModelTorch
 from SR.losses.basic_loss import L2Loss
 from SR.losses.frequency_loss import FocalFrequencyLoss
-from SR.losses.statistical_loss import StatisticalFeatureLoss
+from SR.losses.lpips_loss import LPIPSLoss
 from SR.datapipe.train_dataloader import create_train_dataloader
 
 
@@ -447,15 +447,15 @@ class NoisePredictorTrainer:
         else:
             self.freq_loss = None
         
-        # 统计特征损失
-        if loss_config['stat_weight'] > 0:
-            self.stat_loss = StatisticalFeatureLoss(
+        # LPIPS感知损失
+        if loss_config.get('lpips_weight', 0) > 0:
+            self.lpips_loss = LPIPSLoss(
                 loss_weight=1.0,
-                window_sizes=loss_config.get('stat_window_sizes', [3, 5, 7])
+                net_type=loss_config.get('lpips_net_type', 'alex')
             )
-            print(f"✓ 统计特征损失 (权重: {loss_config['stat_weight']})")
+            print(f"✓ LPIPS感知损失 (权重: {loss_config['lpips_weight']})")
         else:
-            self.stat_loss = None
+            self.lpips_loss = None
     
     def _init_optimizer(self):
         """初始化优化器和学习率调度器"""
@@ -766,11 +766,11 @@ class NoisePredictorTrainer:
             loss_dict['freq'] = freq.item()
             total_loss += loss_config['freq_weight'] * freq
         
-        # 统计特征损失
-        if self.stat_loss is not None and loss_config['stat_weight'] > 0:
-            stat = self.stat_loss(sr_latent, hr_latent)
-            loss_dict['stat'] = stat.item()
-            total_loss += loss_config['stat_weight'] * stat
+        # LPIPS感知损失
+        if self.lpips_loss is not None and loss_config.get('lpips_weight', 0) > 0:
+            lpips_val = self.lpips_loss(sr_latent, hr_latent)
+            loss_dict['lpips'] = lpips_val.item()
+            total_loss += loss_config['lpips_weight'] * lpips_val
         
         loss_dict['total'] = total_loss.item()
         

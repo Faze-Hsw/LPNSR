@@ -252,7 +252,7 @@ noise_predictor:
 loss:
   l2_weight: 1.0               # L2损失权重
   freq_weight: 0.1             # 频域损失权重
-  stat_weight: 0.5             # 统计损失权重
+  lpips_weight: 0.5            # 感知损失权重
 ```
 
 #### 优化器参数

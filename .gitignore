@@ -24,3 +24,6 @@ venv/
 *.tmp
 *.bak
 *.swp
+
+traindata/
+testdata/
