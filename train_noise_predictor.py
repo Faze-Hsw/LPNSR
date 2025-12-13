@@ -609,7 +609,6 @@ class NoisePredictorTrainer:
             variance: 后验方差
             log_variance: 后验对数方差
         """
-        # 注意：ResShift的系数顺序与DDPM不同！
         # ResShift: μ = coef1·x_t + coef2·x_0
         # DDPM:     μ = coef1·x_0 + coef2·x_t
         posterior_mean = (
@@ -641,10 +640,7 @@ class NoisePredictorTrainer:
         # 2. 使用ResShift的UNet预测x_0
         # 注意：lq应该是图像空间的LR图像，不是潜在空间的y！
         pred_x0 = self.resshift_unet(x_t_normalized, t_tensor, lq=lr_image)
-        
-        # clip预测结果到[-1, 1]
-        pred_x0 = pred_x0.clamp(-1, 1)
-        
+
         # 3. 计算后验分布 q(x_{t-1} | x_t, x_0)
         mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0, x_t, t_tensor)
         
