@@ -56,17 +56,20 @@ class RealESRGANTrainDataset(Dataset):
         if image_extensions is None:
             image_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp']
         
-        # 加载所有图像路径 - 递归搜索多级目录
+        # 递归加载所有图像路径（搜索目录及其所有子目录）
         self.image_paths = []
         for ext in image_extensions:
-            self.image_paths.extend(glob.glob(str(self.data_dir / '**' / f'*{ext}'), recursive=True))
-            self.image_paths.extend(glob.glob(str(self.data_dir / '**' / f'*{ext.upper()}'), recursive=True))
+            # 使用 ** 模式递归搜索所有子目录
+            self.image_paths.extend(glob.glob(str(self.data_dir / f'**/*{ext}'), recursive=True))
+            self.image_paths.extend(glob.glob(str(self.data_dir / f'**/*{ext.upper()}'), recursive=True))
+        
+        # 去重（以防有重复路径）
         self.image_paths = list(set(self.image_paths))
         
         if len(self.image_paths) == 0:
-            raise ValueError(f"在目录 {data_dir} 中没有找到任何图像文件")
+            raise ValueError(f"在目录 {data_dir} 及其子目录中没有找到任何图像文件")
         
-        print(f"数据集初始化完成：找到 {len(self.image_paths)} 张图像")
+        print(f"数据集初始化完成：在 {data_dir} 及其子目录中找到 {len(self.image_paths)} 张图像")
         
         # 初始化退化管道
         self.degrader = RealESRGANDegradation(config_path)

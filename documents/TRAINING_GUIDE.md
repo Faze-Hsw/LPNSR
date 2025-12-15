@@ -93,13 +93,10 @@ optimizer:
 
 ```bash
 # 从头开始训练
-python -m SR.train_noise_predictor \
-    --config SR/configs/train_noise_predictor.yaml
+python -m SR.train_noise_predictor --config SR/configs/train_noise_predictor.yaml
 
 # 从checkpoint恢复训练
-python -m SR.train_noise_predictor \
-    --config SR/configs/train_noise_predictor.yaml \
-    --resume SR/experiments/noise_predictor/checkpoints/checkpoint_epoch_50.pth
+python -m SR.train_noise_predictor --config SR/configs/train_noise_predictor.yaml --resume SR/experiments/noise_predictor/checkpoints/checkpoint_epoch_50.pth
 ```
 
 ### 4. 监控训练
@@ -252,7 +249,7 @@ noise_predictor:
 loss:
   l2_weight: 1.0               # L2损失权重
   freq_weight: 0.1             # 频域损失权重
-  lpips_weight: 0.5            # 感知损失权重
+  stat_weight: 0.5             # 统计损失权重
 ```
 
 #### 优化器参数

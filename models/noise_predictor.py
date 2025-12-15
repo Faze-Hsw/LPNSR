@@ -17,7 +17,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from typing import Optional, Tuple
+import numpy as np
+from typing import Optional, Tuple, Union
+from dataclasses import dataclass
 
 from SR.ldm.modules.diffusionmodules.openaimodel import (
     conv_nd,
@@ -35,6 +37,92 @@ try:
 except ImportError:
     XFORMERS_IS_AVAILABLE = False
     print("xformers not available, using standard attention implementation")
+
+
+@dataclass
+class NoisePredictorOutput:
+    """噪声预测器输出"""
+    noise: torch.Tensor  # 采样后的噪声 或 均值
+    latent_dist: Optional['DiagonalGaussianDistribution'] = None  # 分布对象
+
+
+class DiagonalGaussianDistribution:
+    """
+    对角高斯分布
+    用于从预测的分布参数中采样噪声（类似InvSR的实现）
+    """
+    def __init__(self, parameters: torch.Tensor, deterministic: bool = False):
+        """
+        Args:
+            parameters: 分布参数 [B, 2*C, H, W]，包含 [mean, logvar]
+            deterministic: 是否使用确定性采样（直接返回均值）
+        """
+        self.parameters = parameters
+        self.mean, self.logvar = torch.chunk(parameters, 2, dim=1)
+        # 限制logvar范围，防止数值不稳定
+        self.logvar = torch.clamp(self.logvar, -30.0, 20.0)
+        self.deterministic = deterministic
+        self.std = torch.exp(0.5 * self.logvar)
+        self.var = torch.exp(self.logvar)
+        
+        if self.deterministic:
+            self.var = self.std = torch.zeros_like(
+                self.mean, device=self.parameters.device, dtype=self.parameters.dtype
+            )
+    
+    def sample(self, generator: Optional[torch.Generator] = None) -> torch.Tensor:
+        """
+        重参数化采样: noise = mean + std * eps, eps ~ N(0, I)
+        
+        Args:
+            generator: 随机数生成器（可选）
+        Returns:
+            采样后的噪声 [B, C, H, W]
+        """
+        # 生成标准正态噪声
+        eps = torch.randn(
+            self.mean.shape,
+            generator=generator,
+            device=self.parameters.device,
+            dtype=self.parameters.dtype,
+        )
+        # 重参数化技巧
+        x = self.mean + self.std * eps
+        return x
+    
+    def mode(self) -> torch.Tensor:
+        """返回分布的众数（均值）"""
+        return self.mean
+    
+    def kl(self, other: 'DiagonalGaussianDistribution' = None) -> torch.Tensor:
+        """
+        计算KL散度
+        如果other为None，则计算与标准正态分布N(0,I)的KL散度
+        
+        Args:
+            other: 另一个高斯分布（可选）
+        Returns:
+            KL散度 [B]
+        """
+        if self.deterministic:
+            return torch.Tensor([0.0])
+        
+        if other is None:
+            # KL(q || N(0,I)) = 0.5 * sum(mu^2 + var - 1 - log(var))
+            return 0.5 * torch.sum(
+                torch.pow(self.mean, 2) + self.var - 1.0 - self.logvar,
+                dim=[1, 2, 3],
+            )
+        else:
+            # KL(q || p)
+            return 0.5 * torch.sum(
+                torch.pow(self.mean - other.mean, 2) / other.var
+                + self.var / other.var
+                - 1.0
+                - self.logvar
+                + other.logvar,
+                dim=[1, 2, 3],
+            )
 
 
 class SpatialAttention(nn.Module):
@@ -466,26 +554,27 @@ class ResidualBlock(nn.Module):
 
 class AdaptiveNoisePredictor(nn.Module):
     """
-    增强型自适应噪声预测器
+    增强型自适应噪声预测器（分布预测版本，类似InvSR）
     
     核心创新点:
     1. 多尺度特征提取: 捕获不同尺度的图像特征
     2. 双重注意力机制: 自适应地关注重要区域和通道
-    3. 交叉注意力: 融合含噪特征和LR特征
-    4. 时间步条件化: 根据扩散时间步调整预测策略
-    5. LR图像引导: 利用原始低分辨率图像的先验信息
-    6. 残差学习: 预测噪声残差，提高训练稳定性
-    7. U-Net架构: 编码器-解码器结构，跨尺度特征融合
-    8. 频域感知: 结合频域特征增强纹理预测
+    3. 时间步条件化: 根据扩散时间步调整预测策略
+    4. LR图像引导: 利用原始低分辨率图像的先验信息
+    5. 分布预测: 输出噪声的分布参数(mean, logvar)，通过重参数化采样
+    6. U-Net架构: 编码器-解码器结构，跨尺度特征融合
+    7. 频域感知: 结合频域特征增强纹理预测
+    
+    注意：与InvSR一致，噪声预测器只接受LR latent和时间步作为输入，
+    不需要z_t作为输入！噪声预测器的作用是根据LR图像预测用于前向扩散的噪声。
     
     输入:
-        - noisy_latent: 当前步的含噪潜在特征 [B, C, H, W]
-        - timesteps: 扩散时间步 [B]
         - lr_latent: 原始LR图像的潜在表示 [B, C, H, W]
+        - timesteps: 扩散时间步 [B]
     
     输出:
-        - predicted_noise: 预测的噪声 [B, C, H, W]
-        - noise_scale: 噪声尺度 [B, 1]
+        - 如果sample_posterior=True: 返回采样后的噪声 [B, C, H, W]
+        - 如果sample_posterior=False: 返回分布对象 DiagonalGaussianDistribution
     """
     
     def __init__(
@@ -501,7 +590,8 @@ class AdaptiveNoisePredictor(nn.Module):
         use_cross_attention: bool = False,
         use_frequency_aware: bool = False,
         use_xformers: bool = True,
-        use_checkpoint: bool = False
+        use_checkpoint: bool = False,
+        double_z: bool = True  # 是否输出分布参数（mean和logvar）
     ):
         """
         Args:
@@ -528,6 +618,7 @@ class AdaptiveNoisePredictor(nn.Module):
         self.use_frequency_aware = use_frequency_aware
         self.use_xformers = use_xformers and XFORMERS_IS_AVAILABLE
         self.use_checkpoint = use_checkpoint
+        self.double_z = double_z
         
         # 选择交叉注意力实现
         if self.use_xformers:
@@ -670,48 +761,43 @@ class AdaptiveNoisePredictor(nn.Module):
             ch = out_ch
         
         # 输出层
+        # 如果double_z=True，输出通道数翻倍，包含[mean, logvar]
+        output_channels = latent_channels * 2 if double_z else latent_channels
         self.output = nn.Sequential(
             nn.GroupNorm(32, model_channels),
             nn.SiLU(),
-            zero_module(nn.Conv2d(model_channels, latent_channels, 3, padding=1))
-        )
-        
-        # 噪声尺度预测器
-        self.noise_scale_predictor = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Flatten(),
-            linear(model_channels, model_channels),
-            nn.SiLU(),
-            linear(model_channels, model_channels // 2),
-            nn.SiLU(),
-            linear(model_channels // 2, 1),
-            nn.Sigmoid()
+            zero_module(nn.Conv2d(model_channels, output_channels, 3, padding=1))
         )
     
     def forward(
         self,
-        noisy_latent: torch.Tensor,
+        lr_latent: torch.Tensor,
         timesteps: torch.Tensor,
-        lr_latent: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        sample_posterior: bool = True,
+        generator: Optional[torch.Generator] = None
+    ) -> Union[torch.Tensor, DiagonalGaussianDistribution, NoisePredictorOutput]:
         """
-        前向传播
+        前向传播（类似InvSR，只接受LR latent和时间步作为输入）
         
         Args:
-            noisy_latent: 当前步的含噪潜在特征 [B, C, H, W]
-            timesteps: 扩散时间步 [B]
             lr_latent: 原始LR图像的潜在表示 [B, C, H, W]
+            timesteps: 扩散时间步 [B]
+            sample_posterior: 是否从分布中采样（True）或返回分布对象（False）
+            generator: 随机数生成器（可选）
         
         Returns:
-            predicted_noise: 预测的噪声 [B, C, H, W]
-            noise_scale: 噪声尺度 [B, 1]
+            如果double_z=True:
+                sample_posterior=True: 采样后的噪声 [B, C, H, W]
+                sample_posterior=False: 分布对象 DiagonalGaussianDistribution
+            如果double_z=False:
+                直接输出噪声 [B, C, H, W]
         """
         # 时间步嵌入
         t_emb = timestep_embedding(timesteps, self.model_channels)
         t_emb = self.time_embed(t_emb)
         
-        # 输入投影
-        h = self.input_proj(noisy_latent)
+        # 输入投影：直接使用LR latent作为输入（与InvSR一致）
+        h = self.input_proj(lr_latent)
         
         # 编码器路径
         encoder_features = []
@@ -806,16 +892,23 @@ class AdaptiveNoisePredictor(nn.Module):
             if level < self.num_levels - 1:
                 h = self.upsamplers[level](h)
         
-        # 预测噪声
-        noise = self.output(h)
+        # 输出层
+        h_out = self.output(h)
         
-        # 预测噪声尺度
-        noise_scale = self.noise_scale_predictor(h)
-        
-        # 应用噪声尺度
-        scaled_noise = noise * noise_scale.view(-1, 1, 1, 1)
-        
-        return scaled_noise, noise_scale
+        # 如果使用分布预测
+        if self.double_z:
+            # 创建高斯分布对象
+            posterior = DiagonalGaussianDistribution(h_out)
+            
+            if sample_posterior:
+                # 从分布中采样噪声
+                return posterior.sample(generator=generator)
+            else:
+                # 返回分布对象
+                return posterior
+        else:
+            # 直接返回噪声预测
+            return h_out
 
 
 def create_noise_predictor(
@@ -851,16 +944,25 @@ if __name__ == "__main__":
         use_frequency_aware=True
     ).to(device)
     
-    # 测试输入
+    # 测试输入（类似InvSR，只需要LR latent和时间步）
     batch_size = 2
-    noisy_latent = torch.randn(batch_size, 3, 64, 64).to(device)
     timesteps = torch.randint(0, 1000, (batch_size,)).to(device)
     lr_latent = torch.randn(batch_size, 3, 64, 64).to(device)
     
-    # 前向传播
-    predicted_noise, noise_scale = model(noisy_latent, timesteps, lr_latent)
+    # 测试分布预测模式
+    print("=" * 50)
+    print("测试分布预测模式 (double_z=True)")
+    print("=" * 50)
     
-    print(f"输入形状: {noisy_latent.shape}")
-    print(f"预测噪声形状: {predicted_noise.shape}")
-    print(f"噪声尺度形状: {noise_scale.shape}")
-    print(f"模型参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+    # 采样模式（只需要lr_latent和timesteps）
+    predicted_noise = model(lr_latent, timesteps, sample_posterior=True)
+    print(f"LR latent形状: {lr_latent.shape}")
+    print(f"采样噪声形状: {predicted_noise.shape}")
+    
+    # 分布模式
+    posterior = model(lr_latent, timesteps, sample_posterior=False)
+    print(f"分布均值形状: {posterior.mean.shape}")
+    print(f"分布方差形状: {posterior.var.shape}")
+    print(f"从分布采样: {posterior.sample().shape}")
+    
+    print(f"\n模型参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")

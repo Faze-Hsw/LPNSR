@@ -41,14 +41,10 @@ python -m SR.check_inference
 
 ```bash
 # 处理单张图像
-python -m SR.inference_noise_predictor \
-    --input path/to/lr_image.png \
-    --output SR/results
+python -m SR.inference_noise_predictor --input path/to/lr_image.png --output SR/results
 
 # 处理整个文件夹
-python -m SR.inference_noise_predictor \
-    --input path/to/lr_images/ \
-    --output results/
+python -m SR.inference_noise_predictor --input path/to/lr_images/ --output results
 ```
 
 ---

@@ -1,5 +1,10 @@
-# 端到端训练噪声预测器的配置文件
-# 训练思路：通过完整的反向采样过程，计算SR与HR的损失来训练噪声预测器
+# 单步训练噪声预测器的配置文件（类似 ResShift 和 InvSR）
+# 训练思路：
+# 1. 随机采样一个时间步 t
+# 2. 使用前向扩散 q_sample 从 z_0 (HR) 扩散到 z_t
+# 3. 噪声预测器预测该时间步的噪声
+# 4. 使用预测的噪声构造 z_t_pred，然后 UNet 预测 z_0_pred
+# 5. 计算 z_0_pred 与真实 z_0 的损失
 
 # ============================================================================
 # 实验设置
@@ -48,7 +53,7 @@ noise_predictor:
 training:
   # 基础设置
   num_epochs: 50
-  batch_size: 8
+  batch_size: 16
   num_workers: 4
   
   # ResShift扩散过程超参数（ResShift v3配置）
@@ -151,7 +156,8 @@ degradation:
 # 损失函数设置
 # ============================================================================
 loss:
-  # L2损失
+  # L2损失（预测z0与真实z0的MSE）
+  # 类似 InvSR，只监督 UNet 输出的 z_0，不直接监督噪声预测
   l2_weight: 1.0
   
   # 频域感知损失
@@ -170,7 +176,7 @@ optimizer:
   lr: 5.0e-5
   beta1: 0.9
   beta2: 0.999
-  weight_decay: 1.0e-4
+  weight_decay: 0.0
 
 # ============================================================================
 # 学习率调度器设置
@@ -179,7 +185,7 @@ scheduler:
   type: "CosineAnnealing"  # CosineAnnealing 或 StepLR
   
   # CosineAnnealing参数
-  min_lr: 1.0e-6
+  min_lr: 1.0e-5
   
   # StepLR参数
   step_size: 50

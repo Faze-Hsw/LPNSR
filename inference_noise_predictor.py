@@ -230,7 +230,6 @@ class NoisePredictorInference:
         print(f"  - 超分倍数: {self.scale_factor}x")
         print(f"  - Chop尺寸: {self.chop_size}x{self.chop_size}")
         print(f"  - Chop步长: {self.chop_stride}")
-        print(f"  - 噪声模式: {'随机噪声(原始ResShift)' if self.use_random_noise else '噪声预测器'}")
     
     def _init_models(self):
         """初始化模型"""
@@ -562,17 +561,22 @@ class NoisePredictorInference:
         从先验分布采样，即 q(x_T|y) ~= N(x_T|y, κ²η_T)
         
         Args:
-            y: 退化图像的潜在表示
+            y: 退化图像的潜在表示（lr_latent）
             noise: 可选的噪声
         
         Returns:
             x_T: 初始采样
         """
-        if noise is None:
-            noise = torch.randn_like(y)
-        
         # 使用最后一个时间步（即num_steps-1，对应原始的最大时间步）
         t = torch.tensor([self.num_steps - 1] * y.shape[0], device=y.device).long()
+        
+        if noise is None:
+            if self.use_random_noise:
+                # 使用随机噪声（原始ResShift方式）
+                noise = torch.randn_like(y)
+            else:
+                # 使用噪声预测器生成初始噪声（与InvSR一致：只接受lr_latent和时间步）
+                noise = self.noise_predictor(y, t, sample_posterior=True)
         
         return y + self._extract_into_tensor(self.kappa * self.sqrt_etas, t, y.shape) * noise
     
@@ -613,13 +617,11 @@ class NoisePredictorInference:
             # 3. 计算ResShift后验分布
             mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0, x_t, t_tensor)
             
-            # 4. 生成噪声（根据配置选择随机噪声或噪声预测器）
-            if self.use_random_noise:
-                # 使用随机噪声（原始ResShift方式）
-                noise = torch.randn_like(x_t)
-            else:
-                # 使用噪声预测器生成噪声
-                noise, _ = self.noise_predictor(x_t, t_tensor, lr_latent)
+            # 4. 生成噪声
+            # 【重要】后验采样阶段强制使用随机噪声
+            # 原因：噪声预测器仅用于初始化x_T（在prior_sample中），
+            # 后续迭代采样应使用随机噪声，这与训练时的设定一致
+            noise = torch.randn_like(x_t)
             
             # 5. 采样x_{t-1}：当t>0时添加噪声，t=0时直接使用均值
             nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
@@ -848,7 +850,12 @@ def main():
     # 覆盖噪声模式
     if args.use_random_noise:
         inferencer.use_random_noise = True
-        print(f"噪声模式已覆盖为: 随机噪声（原始ResShift）")
+    
+    # 打印最终的噪声策略
+    if inferencer.use_random_noise:
+        print(f"噪声策略: 全程随机噪声 (原始ResShift)")
+    else:
+        print(f"噪声策略: 初始化(x_T)使用噪声预测器 + 后续采样使用随机噪声")
     
     # 执行推理
     inferencer.inference(args.input, args.output)

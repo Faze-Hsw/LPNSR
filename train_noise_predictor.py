@@ -1,23 +1,22 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-端到端训练噪声预测器
+单步训练噪声预测器（类似 ResShift 和 InvSR）
 
 训练思路：
 1. 输入HR图像和LR图像
 2. 使用冻结的VAE编码到潜在空间
-3. 从x_T开始进行N步反向采样（ResShift方式）
-4. 每步使用冻结的ResShift UNet预测x_0，计算后验分布
-5. 使用噪声预测器生成噪声（替代随机噪声）
-6. 得到最终的SR图像
-7. 计算SR与HR的损失
+3. 随机采样一个时间步t
+4. 使用前向扩散 q_sample 从 z_0 (HR) 扩散到 z_t
+5. 噪声预测器预测该时间步的噪声
+6. 使用冻结的ResShift UNet从z_t预测z_0
+7. 计算损失：预测z_0与真实z_0的MSE
 8. 反向传播，只更新噪声预测器
 
-关键：完全按照ResShift论文实现扩散过程！
+关键：单步训练，不需要走完整采样过程！
 - 使用eta调度而非beta调度
 - 残差偏移扩散：x_t = (1-η_t)·x_0 + η_t·y + √η_t·κ·ε
-- 初始化：x_T = y + κ·√η_T·ε
-- 后验分布：μ = (η_{t-1}/η_t)·x_t + (α_t/η_t)·x_0
+- 前向扩散：q(x_t | x_0, y) = N(x_t; η_t·(y-x_0)+x_0, η_t·κ²·I)
 """
 
 import os
@@ -620,6 +619,36 @@ class NoisePredictorTrainer:
         
         return posterior_mean, posterior_variance, posterior_log_variance
     
+    def q_sample(self, z_start, z_y, t, noise=None):
+        """
+        前向扩散：从 z_0 扩散到 z_t
+        
+        ResShift 前向扩散公式：
+        q(x_t | x_0, y) = N(x_t; η_t·(y-x_0)+x_0, η_t·κ²·I)
+        x_t = η_t·(y - x_0) + x_0 + √η_t·κ·ε
+            = (1 - η_t)·x_0 + η_t·y + √η_t·κ·ε
+        
+        Args:
+            z_start: HR图像的潜在表示 z_0 [B, C, H, W]
+            z_y: LR图像的潜在表示 y [B, C, H, W]
+            t: 时间步索引 [B]
+            noise: 可选，指定的噪声
+        
+        Returns:
+            z_t: 时间步t的含噪潜在表示
+        """
+        if noise is None:
+            noise = torch.randn_like(z_start)
+        
+        # x_t = η_t·(y - x_0) + x_0 + √η_t·κ·ε
+        #     = (1 - η_t)·x_0 + η_t·y + √η_t·κ·ε
+        etas_t = self._extract(self.etas, t, z_start.shape)
+        sqrt_etas_t = self._extract(self.sqrt_etas, t, z_start.shape)
+        
+        z_t = etas_t * (z_y - z_start) + z_start + sqrt_etas_t * self.kappa * noise
+        
+        return z_t
+    
     @torch.no_grad()
     def p_sample_with_noise_predictor(self, x_t, y, lr_image, t_tensor):
         """
@@ -645,12 +674,11 @@ class NoisePredictorTrainer:
         mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0, x_t, t_tensor)
         
         # 4. 使用噪声预测器生成噪声（替代随机噪声）
-        # 注意：训练时需要梯度，推理时不需要
-        if self.training:
-            predicted_noise, _ = self.noise_predictor(x_t, t_tensor, y)
-        else:
-            with torch.no_grad():
-                predicted_noise, _ = self.noise_predictor(x_t, t_tensor, y)
+        # 与InvSR一致：噪声预测器只需要 y (LR latent) 和时间步
+        # 推理时不需要梯度
+        with torch.no_grad():
+            # sample_posterior=True：从分布中采样噪声
+            predicted_noise = self.noise_predictor(y, t_tensor, sample_posterior=True)
         
         # 5. 采样x_{t-1}
         nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
@@ -688,51 +716,129 @@ class NoisePredictorTrainer:
         
         return x_t
     
-    def reverse_sampling_train(self, hr_latent, lr_latent, lr_image, num_steps):
+    def single_step_training_loss(self, z_start, z_y, t, lr_image):
         """
-        完整的ResShift反向采样过程（训练时使用，需要梯度）
+        单步训练损失计算（类似 InvSR）
         
-        ResShift v3直接用4步训练，所以时间步直接从0到num_timesteps-1
+        InvSR 训练流程：
+        1. 噪声预测器根据 z_y (LR latent) 和时间步 t 预测噪声
+        2. 使用预测的噪声执行前向扩散得到 z_t_pred
+        3. UNet 从 z_t_pred 单步预测 z_0_pred
+        4. 计算 z_0_pred 与真实 z_start 的损失
+        
+        注意：与之前不同，噪声预测器的输入只有 z_y 和 t，不需要 z_t！
+        这与 InvSR 的设计一致：噪声预测器根据 LR 图像预测用于前向扩散的噪声。
         
         Args:
-            hr_latent: HR图像的潜在表示（未使用，保留接口兼容性）
-            lr_latent: LR图像的潜在表示 y
+            z_start: HR图像的潜在表示 z_0 [B, C, H, W]
+            z_y: LR图像的潜在表示 y [B, C, H, W]
+            t: 时间步索引 [B]
             lr_image: 图像空间的LR图像（用作UNet的lq条件）
-            num_steps: 采样步数S（应该等于num_timesteps）
         
         Returns:
-            x_0: 最终的潜在表示
+            loss: 总损失
+            loss_dict: 各项损失的字典
         """
-        # ResShift初始化：x_T = y + κ·√η_T·ε
-        t_init = self.num_timesteps - 1
-        sqrt_eta_T = self.sqrt_etas[t_init].to(lr_latent.device)
-        x_t = lr_latent + self.kappa * sqrt_eta_T * torch.randn_like(lr_latent)
+        loss_dict = {}
         
-        # 反向采样：从num_timesteps-1到0
-        indices = list(range(self.num_timesteps))[::-1]  # [num_timesteps-1, ..., 0]
+        # 1. 噪声预测器根据 z_y 和 t 预测噪声分布并采样（需要梯度）
+        # 与 InvSR 一致：输入是 LR latent 和时间步，不是 z_t！
+        # sample_posterior=True：从分布中采样噪声，保留梯度用于训练
+        predicted_noise = self.noise_predictor(z_y, t, sample_posterior=True)
         
-        for i in indices:
-            t_tensor = torch.full((lr_latent.shape[0],), i, device=self.device, dtype=torch.long)
-            
-            # 1. 对输入进行归一化（ResShift的关键步骤！）
-            x_t_normalized = self._scale_input(x_t, t_tensor)
-            
-            # 2. 使用ResShift的UNet预测x_0（冻结，不需要梯度）
-            # 注意：lq应该是图像空间的LR图像，不是潜在空间的lr_latent！
+        # 调试：检查预测噪声的统计信息
+        # 理想情况下，噪声应该接近标准正态分布 N(0, 1)
+        # 每个epoch的第一个step输出一次
+        if self.epoch_step == 0:
             with torch.no_grad():
-                pred_x0 = self.resshift_unet(x_t_normalized.detach(), t_tensor, lq=lr_image)
-                
-                # 计算ResShift后验分布
-                mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0, x_t.detach(), t_tensor)
-            
-            # 3. 使用噪声预测器生成噪声（需要梯度）
-            predicted_noise, _ = self.noise_predictor(x_t, t_tensor, lr_latent)
-            
-            # 4. 采样x_{t-1}（保留梯度）
-            nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
-            x_t = mean + nonzero_mask * torch.exp(0.5 * log_variance) * predicted_noise
+                noise_mean = predicted_noise.mean().item()
+                noise_std = predicted_noise.std().item()
+                noise_min = predicted_noise.min().item()
+                noise_max = predicted_noise.max().item()
+                print(f"\n[DEBUG Epoch {self.current_epoch}] 预测噪声统计: mean={noise_mean:.4f}, std={noise_std:.4f}, "
+                      f"min={noise_min:.4f}, max={noise_max:.4f}")
         
-        return x_t
+        # 2. 使用预测的噪声执行前向扩散得到 z_t_pred
+        # ResShift 前向扩散公式：z_t = (1-η_t)·z_0 + η_t·y + √η_t·κ·ε
+        etas_t = self._extract(self.etas, t, z_start.shape)
+        sqrt_etas_t = self._extract(self.sqrt_etas, t, z_start.shape)
+        z_t_pred = etas_t * (z_y - z_start) + z_start + sqrt_etas_t * self.kappa * predicted_noise
+        
+        # 调试：检查 z_t_pred 的统计信息
+        # 每个epoch的第一个step输出一次
+        if self.epoch_step == 0:
+            with torch.no_grad():
+                zt_mean = z_t_pred.mean().item()
+                zt_std = z_t_pred.std().item()
+                z0_mean = z_start.mean().item()
+                z0_std = z_start.std().item()
+                print(f"[DEBUG Epoch {self.current_epoch}] z_t_pred统计: mean={zt_mean:.4f}, std={zt_std:.4f}")
+                print(f"[DEBUG Epoch {self.current_epoch}] z_start统计: mean={z0_mean:.4f}, std={z0_std:.4f}")
+        
+        # 3. 使用冻结的 UNet 从 z_t_pred 单步预测 z_0
+        # 关键：虽然 UNet 参数是冻结的（requires_grad=False），
+        # 但梯度仍然可以通过 UNet 的计算图流回到噪声预测器！
+        # 因为 z_t_pred 是由噪声预测器生成的，具有梯度
+        # UNet 只是作为一个"可微分函数"被使用
+        z_t_pred_normalized = self._scale_input(z_t_pred, t)
+        # 不使用 torch.no_grad()，让梯度流过 UNet 回到噪声预测器
+        pred_z0 = self.resshift_unet(z_t_pred_normalized, t, lq=lr_image)
+        
+        # 调试：检查梯度是否正确传播
+        if not pred_z0.requires_grad:
+            print("[WARNING] pred_z0 没有梯度！请检查计算图是否正确。")
+        
+        # 调试：检查 UNet 预测结果的统计信息
+        # 每个epoch的第一个step输出一次
+        if self.epoch_step == 0:
+            with torch.no_grad():
+                pred_mean = pred_z0.mean().item()
+                pred_std = pred_z0.std().item()
+                diff = (pred_z0 - z_start).abs().mean().item()
+                print(f"[DEBUG Epoch {self.current_epoch}] pred_z0统计: mean={pred_mean:.4f}, std={pred_std:.4f}")
+                print(f"[DEBUG Epoch {self.current_epoch}] |pred_z0 - z_start| 平均差异: {diff:.4f}")
+        
+        # 调试：每个epoch对比随机噪声和预测噪声的效果
+        # 每个epoch的第一个step输出一次
+        if self.epoch_step == 0:
+            with torch.no_grad():
+                # 使用随机噪声计算基线损失
+                random_noise = torch.randn_like(z_start)
+                z_t_random = etas_t * (z_y - z_start) + z_start + sqrt_etas_t * self.kappa * random_noise
+                z_t_random_normalized = self._scale_input(z_t_random, t)
+                pred_z0_random = self.resshift_unet(z_t_random_normalized, t, lq=lr_image)
+                baseline_l2 = F.mse_loss(pred_z0_random, z_start).item()
+                current_l2 = F.mse_loss(pred_z0, z_start).item()
+                print(f"[对比实验 Epoch {self.current_epoch}] 随机噪声L2: {baseline_l2:.4f} | 预测噪声L2: {current_l2:.4f}")
+                if current_l2 < baseline_l2:
+                    print(f"[对比实验 Epoch {self.current_epoch}] ✓ 预测噪声优于随机噪声，改进: {(baseline_l2-current_l2)/baseline_l2*100:.2f}%")
+                else:
+                    print(f"[对比实验 Epoch {self.current_epoch}] ✗ 预测噪声不如随机噪声，差距: {(current_l2-baseline_l2)/baseline_l2*100:.2f}%")
+        
+        # 4. 计算损失
+        loss_config = self.config['loss']
+        total_loss = 0.0
+        
+        # L2损失：预测的 z_0 与真实的 z_start
+        l2 = self.l2_loss(pred_z0, z_start)
+        loss_dict['l2'] = l2.item()
+        total_loss += loss_config['l2_weight'] * l2
+        
+        # 频域损失
+        if self.freq_loss is not None and loss_config['freq_weight'] > 0:
+            freq = self.freq_loss(pred_z0, z_start)
+            loss_dict['freq'] = freq.item()
+            total_loss += loss_config['freq_weight'] * freq
+        
+        # LPIPS感知损失
+        if self.lpips_loss is not None and loss_config.get('lpips_weight', 0) > 0:
+            lpips_val = self.lpips_loss(pred_z0, z_start)
+            loss_dict['lpips'] = lpips_val.item()
+            total_loss += loss_config['lpips_weight'] * lpips_val
+        
+        loss_dict['total'] = total_loss.item()
+        
+        return total_loss, loss_dict
     
     def compute_loss(self, sr_latent, hr_latent):
         """
@@ -784,11 +890,16 @@ class NoisePredictorTrainer:
         """
         self.noise_predictor.train()
         
+        # 记录当前epoch和epoch内的step，用于调试输出
+        self.current_epoch = epoch
+        self.epoch_step = 0
+        
         total_loss_dict = {}
         
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch}/{self.config['training']['num_epochs']}")
         
         for step, batch in enumerate(pbar):
+            self.epoch_step = step
             # 获取数据
             hr_images = batch['gt'].to(self.device)  # [B, 3, H, W], [0, 1]
             lr_images = batch['lq'].to(self.device)  # [B, 3, H, W], [0, 1]
@@ -876,10 +987,10 @@ class NoisePredictorTrainer:
             )
             lr_latent = self.vae.encode(lr_images_upsampled)
             
-            # 反向采样
+            # 反向采样（使用推理模式，不需要梯度）
             # 注意：lr_images是64x64的图像空间LR，用作UNet的lq条件
             num_steps = self.config['training']['sampling_steps']
-            sr_latent = self.reverse_sampling_train(hr_latent, lr_latent, lr_images, num_steps)
+            sr_latent = self.reverse_sampling(hr_latent, lr_latent, lr_images, num_steps)
             
             # 计算损失
             loss, loss_dict = self.compute_loss(sr_latent, hr_latent)
@@ -905,7 +1016,7 @@ class NoisePredictorTrainer:
     
     def train_step(self, hr_images, lr_images):
         """
-        单步训练
+        单步训练（类似 ResShift 和 InvSR）
         
         Args:
             hr_images: HR图像 [B, 3, H, W], 范围[0, 1]
@@ -915,32 +1026,35 @@ class NoisePredictorTrainer:
             loss_dict: 损失字典
         """
         self.noise_predictor.train()
+        batch_size = hr_images.shape[0]
         
         # 1. 编码到潜在空间（冻结的VAE）
         with torch.no_grad():
             # 转换到[-1, 1]
-            hr_images = hr_images * 2.0 - 1.0
-            lr_images = lr_images * 2.0 - 1.0
+            hr_images_norm = hr_images * 2.0 - 1.0
+            lr_images_norm = lr_images * 2.0 - 1.0
             
             # HR图像直接编码
-            hr_latent = self.vae.encode(hr_images)
+            z_start = self.vae.encode(hr_images_norm)
             
             # LR图像需要先上采样到与HR相同尺寸，再编码
-            # 这样LR和HR在潜在空间中尺寸相同（都是64×64）
             scale_factor = self.config['data']['train']['scale']
             lr_images_upsampled = torch.nn.functional.interpolate(
-                lr_images, scale_factor=scale_factor, mode='bicubic', align_corners=False
+                lr_images_norm, scale_factor=scale_factor, mode='bicubic', align_corners=False
             )
-            lr_latent = self.vae.encode(lr_images_upsampled)
+            z_y = self.vae.encode(lr_images_upsampled)
         
-        # 2. 反向采样（使用噪声预测器）
-        num_steps = self.config['training']['sampling_steps']
+        # 2. 随机采样时间步 t（单步训练的关键！）
+        t = torch.randint(0, self.num_timesteps, (batch_size,), device=self.device, dtype=torch.long)
         
+        # 3. 计算单步训练损失（InvSR 风格）
+        # 注意：不再需要先生成随机噪声和执行前向扩散！
+        # 噪声预测器会根据 z_y 和 t 预测噪声，然后在 single_step_training_loss 中执行前向扩散
         if self.config['training']['use_amp']:
             with autocast():
-                # 注意：lr_images是64x64的图像空间LR，用作UNet的lq条件
-                sr_latent = self.reverse_sampling_train(hr_latent, lr_latent, lr_images, num_steps)
-                loss, loss_dict = self.compute_loss(sr_latent, hr_latent)
+                loss, loss_dict = self.single_step_training_loss(
+                    z_start, z_y, t, lr_images_norm
+                )
             
             # 反向传播（AMP）
             self.optimizer.zero_grad()
@@ -957,9 +1071,9 @@ class NoisePredictorTrainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
-            # 注意：lr_images是64x64的图像空间LR，用作UNet的lq条件
-            sr_latent = self.reverse_sampling_train(hr_latent, lr_latent, lr_images, num_steps)
-            loss, loss_dict = self.compute_loss(sr_latent, hr_latent)
+            loss, loss_dict = self.single_step_training_loss(
+                z_start, z_y, t, lr_images_norm
+            )
             
             # 反向传播
             self.optimizer.zero_grad()
@@ -1044,7 +1158,7 @@ class NoisePredictorTrainer:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='训练噪声预测器（端到端）')
+    parser = argparse.ArgumentParser(description='训练噪声预测器（单步训练）')
     parser.add_argument('--config', type=str, required=True, help='配置文件路径')
     parser.add_argument('--resume', type=str, default=None, help='恢复训练的checkpoint路径')
     args = parser.parse_args()
