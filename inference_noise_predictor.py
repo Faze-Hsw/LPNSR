@@ -563,7 +563,9 @@ class NoisePredictorInference:
         """
         从先验分布采样，即 q(x_T|y) ~= N(x_T|y, κ²η_T)
 
-        【重要】初始化始终使用噪声预测器，无论use_random_noise设置如何
+        【重要】初始化和中间步骤保持一致：
+        - use_random_noise=True: 都用随机噪声
+        - use_random_noise=False: 都用噪声预测器
 
         Args:
             y: 退化图像的潜在表示（lr_latent）
@@ -576,8 +578,13 @@ class NoisePredictorInference:
         t = torch.tensor([self.num_steps - 1] * y.shape[0], device=y.device).long()
 
         if noise is None:
-            # 【修改】初始化始终使用噪声预测器生成初始噪声
-            noise = self.noise_predictor(y, t, sample_posterior=True)
+            # 根据use_random_noise选择噪声来源（与中间采样保持一致）
+            if self.use_random_noise:
+                # 使用随机高斯噪声
+                noise = torch.randn_like(y)
+            else:
+                # 使用噪声预测器生成噪声
+                noise = self.noise_predictor(y, t, sample_posterior=True)
 
         return y + self._extract_into_tensor(self.kappa * self.sqrt_etas, t, y.shape) * noise
 
