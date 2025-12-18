@@ -35,7 +35,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
-from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 from tqdm import tqdm
 import numpy as np
@@ -168,10 +167,6 @@ class NoisePredictorTrainer:
         self.exp_dir.mkdir(parents=True, exist_ok=True)
         (self.exp_dir / 'checkpoints').mkdir(exist_ok=True)
         (self.exp_dir / 'samples').mkdir(exist_ok=True)
-        (self.exp_dir / 'tensorboard').mkdir(exist_ok=True)
-
-        # 初始化TensorBoard
-        self.writer = SummaryWriter(log_dir=str(self.exp_dir / 'tensorboard'))
 
         # 初始化模型
         self._init_models()
@@ -843,13 +838,6 @@ class NoisePredictorTrainer:
                 self.loss_history['predicted_noise_l2'].append(current_l2)
                 self.loss_history['improvement_percent'].append(improvement)
 
-                # 记录到 TensorBoard
-                self.writer.add_scalars('L2_Comparison_MultiStep', {
-                    'random_noise': baseline_l2,
-                    'predicted_noise': current_l2
-                }, self.current_epoch)
-                self.writer.add_scalar('Improvement_Percent_MultiStep', improvement, self.current_epoch)
-
                 print(
                     f"[多步对比 Epoch {self.current_epoch}] 随机噪声L2: {baseline_l2:.4f} | 预测噪声L2: {current_l2:.4f}")
                 if current_l2 < baseline_l2:
@@ -936,9 +924,15 @@ class NoisePredictorTrainer:
         self.current_epoch = epoch
         self.epoch_step = 0
 
+        # 获取梯度累积步数
+        gradient_accumulation_steps = self.config['training'].get('gradient_accumulation_steps', 1)
+
         total_loss_dict = {}
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch}/{self.config['training']['num_epochs']}")
+
+        # 在epoch开始时清零梯度
+        self.optimizer.zero_grad()
 
         for step, batch in enumerate(pbar):
             self.epoch_step = step
@@ -946,8 +940,11 @@ class NoisePredictorTrainer:
             hr_images = batch['gt'].to(self.device)  # [B, 3, H, W], [0, 1]
             lr_images = batch['lq'].to(self.device)  # [B, 3, H, W], [0, 1]
 
+            # 判断是否为梯度累积的最后一步（需要执行optimizer.step()）
+            is_update_step = (step + 1) % gradient_accumulation_steps == 0 or (step + 1) == len(self.train_loader)
+
             # 训练一步
-            loss_dict = self.train_step(hr_images, lr_images)
+            loss_dict = self.train_step(hr_images, lr_images, is_update_step=is_update_step)
 
             # 累积损失
             for key, value in loss_dict.items():
@@ -969,21 +966,11 @@ class NoisePredictorTrainer:
                     print(f"  {key}: {value:.4f}")
                 print(f"  lr: {self.optimizer.param_groups[0]['lr']:.2e}")
 
-            # 记录到TensorBoard（每个step）
-            for key, value in loss_dict.items():
-                self.writer.add_scalar(f'Train_Step/{key}', value, self.global_step)
-            self.writer.add_scalar('Train_Step/learning_rate', self.optimizer.param_groups[0]['lr'], self.global_step)
-
             self.global_step += 1
 
         # 计算平均损失
         num_batches = len(self.train_loader)
         avg_loss_dict = {key: value / num_batches for key, value in total_loss_dict.items()}
-
-        # 记录epoch平均损失到TensorBoard
-        for key, value in avg_loss_dict.items():
-            self.writer.add_scalar(f'Train_Epoch/{key}', value, epoch)
-        self.writer.add_scalar('Train_Epoch/learning_rate', self.optimizer.param_groups[0]['lr'], epoch)
 
         return avg_loss_dict
 
@@ -993,7 +980,7 @@ class NoisePredictorTrainer:
         验证
 
         Args:
-            epoch: 当前epoch数（用于TensorBoard记录）
+            epoch: 当前epoch数
 
         Returns:
             avg_loss_dict: 平均损失字典
@@ -1050,25 +1037,25 @@ class NoisePredictorTrainer:
         num_batches = len(self.val_loader)
         avg_loss_dict = {key: value / num_batches for key, value in total_loss_dict.items()}
 
-        # 记录验证损失到TensorBoard
-        for key, value in avg_loss_dict.items():
-            self.writer.add_scalar(f'Validation/{key}', value, epoch)
-
         return avg_loss_dict
 
-    def train_step(self, hr_images, lr_images):
+    def train_step(self, hr_images, lr_images, is_update_step=True):
         """
-        单步训练（类似 ResShift 和 InvSR）
+        单步训练（类似 ResShift 和 InvSR），支持梯度累计
 
         Args:
             hr_images: HR图像 [B, 3, H, W], 范围[0, 1]
             lr_images: LR图像 [B, 3, H, W], 范围[0, 1]
+            is_update_step: 是否为梯度累计的最后一步（需要执行optimizer.step()）
 
         Returns:
             loss_dict: 损失字典
         """
         self.noise_predictor.train()
         batch_size = hr_images.shape[0]
+
+        # 获取梯度累积步数
+        gradient_accumulation_steps = self.config['training'].get('gradient_accumulation_steps', 1)
 
         # 1. 编码到潜在空间（冻结的VAE）
         with torch.no_grad():
@@ -1094,40 +1081,50 @@ class NoisePredictorTrainer:
                     z_start, z_y, lr_images_norm
                 )
 
-            # 反向传播（AMP）
-            self.optimizer.zero_grad()
-            self.scaler.scale(loss).backward()
+            # 梯度累计：loss除以累积步数，保持梯度量级一致
+            scaled_loss = loss / gradient_accumulation_steps
 
-            # 梯度裁剪
-            if self.config['training']['gradient_clip'] > 0:
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    self.noise_predictor.parameters(),
-                    self.config['training']['gradient_clip']
-                )
+            # 反向传播（AMP）- 梯度会累积
+            self.scaler.scale(scaled_loss).backward()
 
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            # 只在累积完成后执行optimizer.step()
+            if is_update_step:
+                # 梯度裁剪
+                if self.config['training']['gradient_clip'] > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.noise_predictor.parameters(),
+                        self.config['training']['gradient_clip']
+                    )
+
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+                self.optimizer.zero_grad()  # 更新后清零梯度
         else:
             loss, loss_dict = self.multi_step_training_loss(
                 z_start, z_y, lr_images_norm
             )
 
-            # 反向传播
-            self.optimizer.zero_grad()
-            loss.backward()
+            # 梯度累计：loss除以累积步数，保持梯度量级一致
+            scaled_loss = loss / gradient_accumulation_steps
 
-            # 梯度裁剪
-            if self.config['training']['gradient_clip'] > 0:
-                torch.nn.utils.clip_grad_norm_(
-                    self.noise_predictor.parameters(),
-                    self.config['training']['gradient_clip']
-                )
+            # 反向传播 - 梯度会累积
+            scaled_loss.backward()
 
-            self.optimizer.step()
+            # 只在累积完成后执行optimizer.step()
+            if is_update_step:
+                # 梯度裁剪
+                if self.config['training']['gradient_clip'] > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.noise_predictor.parameters(),
+                        self.config['training']['gradient_clip']
+                    )
 
-        # 更新EMA
-        if self.ema is not None:
+                self.optimizer.step()
+                self.optimizer.zero_grad()  # 更新后清零梯度
+
+        # 只在累积完成后更新EMA
+        if is_update_step and self.ema is not None:
             self.ema.update()
 
         return loss_dict
@@ -1343,11 +1340,6 @@ def main():
         plot_save_path_pdf = str(trainer.exp_dir / 'l2_loss_comparison.pdf')
         plot_loss_comparison(trainer.loss_history, plot_save_path_pdf)
 
-        # 关闭TensorBoard
-        trainer.writer.close()
-        print(f"\nTensorBoard日志已保存到: {trainer.exp_dir / 'tensorboard'}")
-        print("使用以下命令查看: tensorboard --logdir=" + str(trainer.exp_dir / 'tensorboard'))
-
     except KeyboardInterrupt:
         print("\n\n训练被中断！")
         print("保存当前checkpoint...")
@@ -1359,10 +1351,6 @@ def main():
             print("\n生成当前L2损失对比图...")
             plot_save_path = str(trainer.exp_dir / 'l2_loss_comparison_interrupted.png')
             plot_loss_comparison(trainer.loss_history, plot_save_path)
-
-        # 关闭TensorBoard
-        trainer.writer.close()
-        print(f"\nTensorBoard日志已保存到: {trainer.exp_dir / 'tensorboard'}")
 
 
 if __name__ == '__main__':

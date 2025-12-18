@@ -117,7 +117,7 @@ training:
   ema_decay: 0.9999
   use_gradient_checkpointing: true  # 梯度检查点
   gradient_clip: 1.0  # 梯度裁剪
-  gradient_accumulation_steps: 8  # 梯度累积步数
+  gradient_accumulation_steps: 16  # 梯度累积步数
   
   # 学习率预热
   warmup_epochs: 5
@@ -204,8 +204,6 @@ validation:
 # 日志设置
 # ============================================================================
 logging:
-  use_tensorboard: true
-  tensorboard_dir: "SR/experiments/tensorboard"
   
   # 打印设置
   print_freq: 100  # 每N步打印一次
