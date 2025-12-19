@@ -227,11 +227,15 @@ class NoisePredictorInference:
         self.use_amp = self.config['inference']['use_amp']
         self.use_random_noise = self.config['inference'].get('use_random_noise', False)
 
+        # 颜色校正配置（解决超分后图像颜色偏移问题）
+        self.color_correction = self.config['inference'].get('color_correction', True)
+
         print(f"✓ 推理器初始化完成")
         print(f"  - 采样步数: {self.num_steps}")
         print(f"  - 超分倍数: {self.scale_factor}x")
         print(f"  - Chop尺寸: {self.chop_size}x{self.chop_size}")
         print(f"  - Chop步长: {self.chop_stride}")
+        print(f"  - 颜色校正: {'启用' if self.color_correction else '禁用'}")
 
     def _init_models(self):
         """初始化模型"""
@@ -452,6 +456,92 @@ class NoisePredictorInference:
         print(f"    - posterior_mean_coef1: {self.posterior_mean_coef1.numpy()}")
         print(f"    - posterior_mean_coef2: {self.posterior_mean_coef2.numpy()}")
 
+    def _wavelet_blur(self, image: torch.Tensor, radius: int):
+        """
+        对输入tensor应用小波模糊
+
+        Args:
+            image: 输入图像 tensor (B, C, H, W)
+            radius: 模糊半径
+
+        Returns:
+            模糊后的tensor
+        """
+        # 卷积核 - 高斯模糊核
+        kernel_vals = [
+            [0.0625, 0.125, 0.0625],
+            [0.125, 0.25, 0.125],
+            [0.0625, 0.125, 0.0625],
+        ]
+        kernel = torch.tensor(kernel_vals, dtype=image.dtype, device=image.device)
+        # 添加通道维度，变成4D tensor
+        kernel = kernel[None, None]
+        # 在所有输入通道上重复
+        kernel = kernel.repeat(3, 1, 1, 1)
+        # 使用replicate模式进行padding
+        image = F.pad(image, (radius, radius, radius, radius), mode='replicate')
+        # 应用分组卷积
+        output = F.conv2d(image, kernel, groups=3, dilation=radius)
+        return output
+
+    def _wavelet_decomposition(self, image: torch.Tensor, levels: int = 5):
+        """
+        对输入tensor进行小波分解
+
+        Args:
+            image: 输入图像 tensor (B, C, H, W)
+            levels: 分解层数
+
+        Returns:
+            high_freq: 高频分量（细节信息）
+            low_freq: 低频分量（颜色/亮度信息）
+        """
+        high_freq = torch.zeros_like(image)
+        for i in range(levels):
+            radius = 2 ** i
+            low_freq = self._wavelet_blur(image, radius)
+            high_freq += (image - low_freq)
+            image = low_freq
+
+        return high_freq, low_freq
+
+    def _color_correction(self, sr_tensor, lr_tensor):
+        """
+        颜色校正：使用小波重建方法来校正SR图像的颜色偏移
+
+        原理：
+        - 对SR图像进行小波分解，提取高频分量（纹理、边缘等细节）
+        - 对LR图像进行小波分解，提取低频分量（整体颜色、亮度）
+        - 将SR的高频 + LR的低频进行重建，保留SR的细节同时修正颜色
+
+        Args:
+            sr_tensor: SR图像 tensor (B, C, H, W), [-1, 1]
+            lr_tensor: LR图像 tensor (B, C, H, W), [-1, 1]
+
+        Returns:
+            颜色校正后的SR图像 tensor
+        """
+        # 将范围从 [-1, 1] 转换到 [0, 1] 以进行小波处理
+        sr_01 = (sr_tensor + 1.0) / 2.0
+        lr_01 = (lr_tensor + 1.0) / 2.0
+
+        # 对SR图像进行小波分解，提取高频分量（细节信息）
+        sr_high_freq, _ = self._wavelet_decomposition(sr_01)
+
+        # 对LR图像进行小波分解，提取低频分量（颜色信息）
+        _, lr_low_freq = self._wavelet_decomposition(lr_01)
+
+        # 重建：SR的高频（细节）+ LR的低频（颜色）
+        corrected_01 = sr_high_freq + lr_low_freq
+
+        # Clamp到 [0, 1] 范围
+        corrected_01 = torch.clamp(corrected_01, 0.0, 1.0)
+
+        # 转换回 [-1, 1] 范围
+        corrected = corrected_01 * 2.0 - 1.0
+
+        return corrected
+
     def _extract_into_tensor(self, arr, timesteps, broadcast_shape):
         """
         从数组中提取值并广播到目标形状
@@ -556,6 +646,13 @@ class NoisePredictorInference:
         with torch.no_grad():
             sr_tensor = self.vae.decode(sr_latent)
         # print(f"  [Debug] sr_tensor (after VAE decode): min={sr_tensor.min().item():.3f}, max={sr_tensor.max().item():.3f}")
+
+        # 5. clamp到有效范围，防止颜色溢出
+        sr_tensor = torch.clamp(sr_tensor, -1.0, 1.0)
+
+        # 6. 【颜色校正】使用小波重建校正颜色偏移
+        if self.color_correction:
+            sr_tensor = self._color_correction(sr_tensor, lr_upsampled)
 
         return sr_tensor
 
@@ -730,8 +827,9 @@ class NoisePredictorInference:
             with context():
                 sr_tensor = self.sample_func(lr_tensor)
 
-        # 5. 反归一化到[0, 1]
+        # 5. 反归一化到[0, 1]（sr_tensor已在sample_func中clamp到[-1,1]）
         sr_tensor = sr_tensor * 0.5 + 0.5
+        # 额外clamp确保在[0, 1]范围内
         sr_tensor = torch.clamp(sr_tensor, 0, 1)
 
         # 6. 转换为numpy

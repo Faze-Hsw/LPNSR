@@ -69,7 +69,10 @@ inference:
   
   # 噪声生成方式
   use_random_noise: false  # true: 使用随机噪声(原始ResShift), false: 使用噪声预测器
-  
+
+  #颜色校正
+  color_correction: true
+
   # Padding配置
   padding_offset: 64  # Padding到64的倍数（与ResShift保持一致）
   
