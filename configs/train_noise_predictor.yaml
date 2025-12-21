@@ -37,15 +37,7 @@ resshift:
 # 噪声预测器配置
 # ============================================================================
 noise_predictor:
-  latent_channels: 3  # VAE潜在空间通道数
-  model_channels: 160  # 基础通道数
-  channel_mult: [1, 2, 3]  # 通道倍增因子
-  num_res_blocks: 2  # 每层的残差块数量
-  attention_levels: 2  # 使用注意力的层数
-  num_heads: 10  # 注意力头数
-  use_cross_attention: true  # 使用交叉注意力
-  use_frequency_aware: true  # 使用频域感知
-  use_xformers: true  # 使用xFormers加速
+  config_path: "SR/configs/noise_predictor_config.yaml"  # 使用更新后的配置文件
 
 # ============================================================================
 # 训练设置
@@ -117,7 +109,7 @@ training:
   ema_decay: 0.9999
   use_gradient_checkpointing: true  # 梯度检查点
   gradient_clip: 1.0  # 梯度裁剪
-  gradient_accumulation_steps: 16  # 梯度累积步数
+  gradient_accumulation_steps: 8  # 梯度累积步数
   
   # 学习率预热
   warmup_epochs: 5
@@ -162,8 +154,8 @@ loss:
   l2_weight: 1.0
   
   # 频域感知损失
-  freq_weight: 2.0
-  freq_alpha: 1.0  # FocalFrequencyLoss的alpha参数
+  freq_weight: 0.0
+  freq_alpha: 1.2  # FocalFrequencyLoss的alpha参数
   
   # LPIPS感知损失
   lpips_weight: 2.0
@@ -177,7 +169,7 @@ optimizer:
   lr: 5.0e-5
   beta1: 0.9
   beta2: 0.999
-  weight_decay: 0.0
+  weight_decay: 1.0e-6
 
 # ============================================================================
 # 学习率调度器设置

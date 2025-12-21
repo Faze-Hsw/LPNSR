@@ -412,18 +412,31 @@ class NoisePredictorTrainer:
         # 5. 创建噪声预测器（训练）
         print("\n创建噪声预测器...")
         noise_config = self.config['noise_predictor']
-        self.noise_predictor = create_noise_predictor(
-            latent_channels=noise_config['latent_channels'],
-            model_channels=noise_config['model_channels'],
-            channel_mult=tuple(noise_config['channel_mult']),
-            num_res_blocks=noise_config['num_res_blocks'],
-            attention_levels=noise_config['attention_levels'],
-            num_heads=noise_config['num_heads'],
-            use_cross_attention=noise_config['use_cross_attention'],
-            use_frequency_aware=noise_config['use_frequency_aware'],
-            use_xformers=noise_config.get('use_xformers', True),
-            use_checkpoint=self.config['training']['use_gradient_checkpointing']
-        ).to(self.device)
+        # 如果指定了配置文件路径，则加载配置
+        if 'config_path' in noise_config:
+            with open(noise_config['config_path'], 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            # 使用配置文件中的参数
+            self.noise_predictor = create_noise_predictor(
+                latent_channels=config['latent_channels'],
+                model_channels=config['model_channels'],
+                channel_mult=tuple(config['channel_mult']),
+                num_res_blocks=config['num_res_blocks'],
+                growth_rate=config['growth_rate'],
+                res_scale=config['res_scale'],
+                double_z=config['double_z']
+            ).to(self.device)
+        else:
+            # 使用直接指定的参数
+            self.noise_predictor = create_noise_predictor(
+                latent_channels=noise_config['latent_channels'],
+                model_channels=noise_config['model_channels'],
+                channel_mult=tuple(noise_config['channel_mult']),
+                num_res_blocks=noise_config['num_res_blocks'],
+                growth_rate=noise_config.get('growth_rate', 32),
+                res_scale=noise_config.get('res_scale', 0.1),
+                double_z=noise_config.get('double_z', True)
+            ).to(self.device)
 
         num_params = sum(p.numel() for p in self.noise_predictor.parameters())
         print(f"✓ 噪声预测器创建完成")
@@ -658,7 +671,7 @@ class NoisePredictorTrainer:
         # 推理时不需要梯度
         with torch.no_grad():
             # sample_posterior=True：从分布中采样噪声
-            predicted_noise = self.noise_predictor(y, t_tensor, sample_posterior=True)
+            predicted_noise = self.noise_predictor(x_t, y, t_tensor, sample_posterior=True)
 
         # 5. 采样x_{t-1}
         nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
@@ -727,10 +740,9 @@ class NoisePredictorTrainer:
         t_init = self.num_timesteps - 1
         t_init_tensor = torch.full((batch_size,), t_init, device=self.device, dtype=torch.long)
 
-        # 噪声预测器预测初始噪声（需要梯度）
-        predicted_noise_init = self.noise_predictor(z_y, t_init_tensor, sample_posterior=True)
-
+        # 初始化时使用随机高斯噪声（不使用噪声预测器）
         sqrt_eta_T = self._extract(self.sqrt_etas, t_init_tensor, z_y.shape)
+        predicted_noise_init = torch.randn_like(z_y)
         x_t = z_y + self.kappa * sqrt_eta_T * predicted_noise_init
 
         # 调试信息：打印初始化统计
@@ -760,7 +772,7 @@ class NoisePredictorTrainer:
                 mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0, x_t, t_tensor)
 
                 # 使用噪声预测器预测噪声（需要梯度）
-                predicted_noise = self.noise_predictor(z_y, t_tensor, sample_posterior=True)
+                predicted_noise = self.noise_predictor(x_t, z_y, t_tensor, sample_posterior=True)
 
                 # 采样 x_{t-1}
                 # nonzero_mask 在这里总是 1，因为 i > 0

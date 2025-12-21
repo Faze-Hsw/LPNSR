@@ -349,18 +349,32 @@ class NoisePredictorInference:
         # 3. 加载噪声预测器
         print("  加载噪声预测器...")
         noise_predictor_config = self.config['noise_predictor']
-        self.noise_predictor = create_noise_predictor(
-            latent_channels=noise_predictor_config['latent_channels'],
-            model_channels=noise_predictor_config['model_channels'],
-            channel_mult=tuple(noise_predictor_config['channel_mult']),
-            num_res_blocks=noise_predictor_config['num_res_blocks'],
-            attention_levels=noise_predictor_config['attention_levels'],
-            num_heads=noise_predictor_config['num_heads'],
-            use_cross_attention=noise_predictor_config['use_cross_attention'],
-            use_frequency_aware=noise_predictor_config['use_frequency_aware'],
-            use_xformers=noise_predictor_config.get('use_xformers', True),
-            use_checkpoint=False  # 推理时不使用梯度检查点
-        )
+        
+        # 如果指定了配置文件路径，则加载配置
+        if 'config_path' in noise_predictor_config:
+            with open(noise_predictor_config['config_path'], 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+            # 使用配置文件中的参数
+            self.noise_predictor = create_noise_predictor(
+                latent_channels=config['latent_channels'],
+                model_channels=config['model_channels'],
+                channel_mult=tuple(config['channel_mult']),
+                num_res_blocks=config['num_res_blocks'],
+                growth_rate=config['growth_rate'],
+                res_scale=config['res_scale'],
+                double_z=config['double_z']
+            )
+        else:
+            # 使用直接指定的参数
+            self.noise_predictor = create_noise_predictor(
+                latent_channels=noise_predictor_config['latent_channels'],
+                model_channels=noise_predictor_config['model_channels'],
+                channel_mult=tuple(noise_predictor_config['channel_mult']),
+                num_res_blocks=noise_predictor_config['num_res_blocks'],
+                growth_rate=noise_predictor_config.get('growth_rate', 32),
+                res_scale=noise_predictor_config.get('res_scale', 0.1),
+                double_z=noise_predictor_config.get('double_z', True)
+            )
 
         # 加载权重
         noise_ckpt = torch.load(self.config['model']['noise_predictor_path'], map_location='cpu')
@@ -675,13 +689,8 @@ class NoisePredictorInference:
         t = torch.tensor([self.num_steps - 1] * y.shape[0], device=y.device).long()
 
         if noise is None:
-            # 根据use_random_noise选择噪声来源（与中间采样保持一致）
-            if self.use_random_noise:
-                # 使用随机高斯噪声
-                noise = torch.randn_like(y)
-            else:
-                # 使用噪声预测器生成噪声
-                noise = self.noise_predictor(y, t, sample_posterior=True)
+            # 初始化时总是使用随机高斯噪声（不使用噪声预测器）
+            noise = torch.randn_like(y)
 
         return y + self._extract_into_tensor(self.kappa * self.sqrt_etas, t, y.shape) * noise
 
@@ -729,8 +738,8 @@ class NoisePredictorInference:
                 noise = torch.randn_like(x_t)
             else:
                 # 使用噪声预测器预测噪声
-                # 注意：当前噪声预测器只接受(lr_latent, timestep)作为输入
-                noise = self.noise_predictor(lr_latent, t_tensor, sample_posterior=True)
+                # EDSR-Unet噪声预测器需要(z_t, lr_latent, timestep)作为输入
+                noise = self.noise_predictor(x_t, lr_latent, t_tensor, sample_posterior=True)
 
             # 5. 采样x_{t-1}：当t>0时添加噪声，t=0时直接使用均值
             nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
@@ -965,7 +974,7 @@ def main():
     if inferencer.use_random_noise:
         print(f"噪声策略: 初始化(x_T)使用随机高斯噪声 + 中间采样使用随机高斯噪声")
     else:
-        print(f"噪声策略: 初始化(x_T)使用噪声预测器 + 中间采样使用噪声预测器")
+        print(f"噪声策略: 初始化(x_T)使用随机高斯噪声 + 中间采样使用噪声预测器")
 
     # 执行推理
     inferencer.inference(args.input, args.output)

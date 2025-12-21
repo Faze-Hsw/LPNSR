@@ -20,7 +20,7 @@ import math
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from SR.models.noise_predictor import AdaptiveNoisePredictor
+from SR.models.noise_predictor import EDSRUnetNoisePredictor
 
 
 def get_named_eta_schedule(
@@ -146,7 +146,7 @@ class NoiseVisualizationTester:
 
         # 加载噪声预测器
         np_config = self.config['noise_predictor']
-        self.noise_predictor = AdaptiveNoisePredictor(
+        self.noise_predictor = EDSRUnetNoisePredictor(
             latent_channels=np_config['latent_channels'],
             model_channels=np_config['model_channels'],
             channel_mult=np_config['channel_mult'],
@@ -240,8 +240,8 @@ class NoiseVisualizationTester:
         print("\n[Step 2] 噪声预测器生成噪声...")
         t = torch.tensor([self.num_timesteps - 1], device=self.device).long()
 
-        # 获取噪声分布
-        predicted_noise = self.noise_predictor(z_y, t, sample_posterior=True)
+        # 初始化时使用随机高斯噪声（不使用噪声预测器）
+        predicted_noise = torch.randn_like(z_y)
 
         print(f"  预测噪声形状: {predicted_noise.shape}")
         print(f"  预测噪声统计: min={predicted_noise.min():.4f}, max={predicted_noise.max():.4f}, "
