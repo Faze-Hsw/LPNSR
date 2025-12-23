@@ -13,7 +13,8 @@ experiment:
   name: "noise_predictor"
   save_dir: "SR/experiments/noise_predictor"
   keep_recent_checkpoints: 5  # 保留最近N个checkpoint
-  log_interval: 100  # 每N步打印一次日志
+  log_interval: 1000
+  # 每N步打印一次日志
   save_interval: 1  # 每N个epoch保存一次checkpoint
   val_interval: 1  # 每N个epoch验证一次
 
@@ -45,7 +46,7 @@ noise_predictor:
 training:
   # 基础设置
   num_epochs: 100
-  batch_size: 4
+  batch_size: 2
   num_workers: 4
 
 
@@ -109,7 +110,7 @@ training:
   ema_decay: 0.9999
   use_gradient_checkpointing: true  # 梯度检查点
   gradient_clip: 1.0  # 梯度裁剪
-  gradient_accumulation_steps: 8  # 梯度累积步数
+  gradient_accumulation_steps: 16  # 梯度累积步数
   
   # 学习率预热
   warmup_epochs: 5
@@ -154,8 +155,8 @@ loss:
   l2_weight: 1.0
   
   # 频域感知损失
-  freq_weight: 0.0
-  freq_alpha: 1.2  # FocalFrequencyLoss的alpha参数
+  freq_weight: 0.5
+  freq_alpha: 2.0  # FocalFrequencyLoss的alpha参数
   
   # LPIPS感知损失
   lpips_weight: 2.0
@@ -198,7 +199,7 @@ validation:
 logging:
   
   # 打印设置
-  print_freq: 100  # 每N步打印一次
+  print_freq: 1000  # 每N步打印一次
   
   # 保存设置
   save_freq: 1000  # 每N步保存一次可视化结果
