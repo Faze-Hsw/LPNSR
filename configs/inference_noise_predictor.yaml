@@ -3,7 +3,7 @@
 
 # 模型路径配置
 model:
-  noise_predictor_path: "SR/pretrained/best_model.pth"  # 训练好的噪声预测器权重
+  noise_predictor_path: "SR/experiments/noise_predictor/checkpoints/checkpoint_epoch_7.pth"  # 训练好的噪声预测器权重
   resshift_path: "SR/pretrained/resshift_realsrx4_s4_v3.pth"  # ResShift预训练权重
   vae_path: "SR/pretrained/autoencoder_vq_f4.pth"  # VAE权重
 
