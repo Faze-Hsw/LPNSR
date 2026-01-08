@@ -27,7 +27,7 @@ metrics:
   test_y_channel: true  # 是否只在Y通道上测试PSNR/SSIM（针对彩色图像）
   
   # LPIPS配置
-  lpips_net: "alex"  # LPIPS使用的网络：'alex', 'vgg', 'squeeze'
+  lpips_net: "vgg"  # LPIPS使用的网络：'alex', 'vgg', 'squeeze'
   
   # 使用官方库（如果安装了的话）
   use_pyiqa: true  # 是否使用pyiqa库（推荐）

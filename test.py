@@ -421,7 +421,7 @@ class SRTester:
         lq_paths = []
         for ext in extensions:
             lq_paths.extend(lq_folder.glob(ext))
-        lq_paths = sorted(lq_paths)
+        lq_paths = sorted(list(set(lq_paths)))
         
         if len(lq_paths) == 0:
             raise ValueError(f"在 {lq_folder} 中未找到图像文件")
