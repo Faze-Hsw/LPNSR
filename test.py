@@ -36,7 +36,7 @@ from collections import OrderedDict
 sys.path.append(str(Path(__file__).parent.parent))
 
 # 导入推理器
-from SR.inference_noise_predictor import NoisePredictorInference
+from LPNSR.inference_noise_predictor import NoisePredictorInference
 
 
 class MetricsCalculator:
@@ -88,7 +88,7 @@ class MetricsCalculator:
         # PSNR
         if self.config.get('calculate_psnr', True):
             self.metrics_enabled['psnr'] = True
-            from SR.metrics.psnr import PSNR
+            from LPNSR.metrics.psnr import PSNR
             self.metric_calculators['psnr'] = PSNR(
                 crop_border=self.crop_border,
                 test_y_channel=self.test_y_channel
@@ -98,7 +98,7 @@ class MetricsCalculator:
         # SSIM
         if self.config.get('calculate_ssim', True):
             self.metrics_enabled['ssim'] = True
-            from SR.metrics.ssim import SSIM
+            from LPNSR.metrics.ssim import SSIM
             self.metric_calculators['ssim'] = SSIM(
                 crop_border=self.crop_border,
                 test_y_channel=self.test_y_channel
@@ -114,7 +114,7 @@ class MetricsCalculator:
                     'lpips', device=self.device, net=self.lpips_net
                 )
             else:
-                from SR.metrics.lpips import LPIPS
+                from LPNSR.metrics.lpips import LPIPS
                 self.metric_calculators['lpips'] = LPIPS(
                     net=self.lpips_net,
                     use_gpu=(self.device == 'cuda')
@@ -129,7 +129,7 @@ class MetricsCalculator:
                 import pyiqa
                 self.metric_calculators['niqe'] = pyiqa.create_metric('niqe', device=self.device)
             else:
-                from SR.metrics.niqe import NIQE
+                from LPNSR.metrics.niqe import NIQE
                 self.metric_calculators['niqe'] = NIQE(device=self.device)
             print(f"  ✓ NIQE 初始化完成")
         
@@ -142,10 +142,10 @@ class MetricsCalculator:
                     self.metric_calculators['pi'] = pyiqa.create_metric('pi', device=self.device)
                 except Exception as e:
                     print(f"  ⚠ PI (pyiqa) 初始化失败: {e}，使用内置实现")
-                    from SR.metrics.pi import PI
+                    from LPNSR.metrics.pi import PI
                     self.metric_calculators['pi'] = PI(device=self.device)
             else:
-                from SR.metrics.pi import PI
+                from LPNSR.metrics.pi import PI
                 self.metric_calculators['pi'] = PI(device=self.device)
             print(f"  ✓ PI 初始化完成")
         
@@ -160,7 +160,7 @@ class MetricsCalculator:
                     print(f"  ⚠ CLIP-IQA (pyiqa) 初始化失败: {e}")
                     self.metrics_enabled['clipiqa'] = False
             else:
-                from SR.metrics.clipiqa import CLIPIQA
+                from LPNSR.metrics.clipiqa import CLIPIQA
                 self.metric_calculators['clipiqa'] = CLIPIQA(device=self.device)
             if self.metrics_enabled['clipiqa']:
                 print(f"  ✓ CLIP-IQA 初始化完成")
@@ -176,7 +176,7 @@ class MetricsCalculator:
                     print(f"  ⚠ MUSIQ (pyiqa) 初始化失败: {e}")
                     self.metrics_enabled['musiq'] = False
             else:
-                from SR.metrics.musiq import MUSIQ
+                from LPNSR.metrics.musiq import MUSIQ
                 self.metric_calculators['musiq'] = MUSIQ(device=self.device)
             if self.metrics_enabled['musiq']:
                 print(f"  ✓ MUSIQ 初始化完成")
@@ -610,7 +610,7 @@ def get_parser():
     parser.add_argument(
         "-c", "--config",
         type=str,
-        default="SR/configs/test_config.yaml",
+        default="LPNSR/configs/test_config.yaml",
         help="测试配置文件路径"
     )
     parser.add_argument(

@@ -14,7 +14,7 @@ from pathlib import Path
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from SR.losses import L2Loss, FocalFrequencyLoss, LPIPSLoss
+from LPNSR.losses import L2Loss, FocalFrequencyLoss, LPIPSLoss
 
 
 def test_l2_loss():

@@ -33,10 +33,10 @@ from contextlib import nullcontext
 # 添加项目路径
 sys.path.append(str(Path(__file__).parent.parent))
 
-# SR模块导入
-from SR.models.noise_predictor import create_noise_predictor
-from SR.models.unet import UNetModelSwin
-from SR.ldm.models.autoencoder import VQModelTorch
+# LPNSR模块导入
+from LPNSR.models.noise_predictor import create_noise_predictor
+from LPNSR.models.unet import UNetModelSwin
+from LPNSR.ldm.models.autoencoder import VQModelTorch
 
 
 def get_named_eta_schedule(
@@ -919,7 +919,7 @@ def get_parser():
     parser.add_argument(
         "-c", "--config",
         type=str,
-        default="SR/configs/inference_noise_predictor.yaml",
+        default="LPNSR/configs/inference_noise_predictor.yaml",
         help="配置文件路径"
     )
     parser.add_argument(

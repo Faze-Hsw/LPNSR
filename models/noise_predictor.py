@@ -11,7 +11,7 @@ import math
 from typing import Optional, Union
 from dataclasses import dataclass
 
-from SR.ldm.modules.diffusionmodules.openaimodel import (
+from LPNSR.ldm.modules.diffusionmodules.openaimodel import (
     conv_nd,
     linear,
     timestep_embedding,

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import cv2
 
-from SR.datapipe.realesrgan_degradation import RealESRGANDegradation
+from LPNSR.datapipe.realesrgan_degradation import RealESRGANDegradation
 
 
 class RealESRGANTrainDataset(Dataset):

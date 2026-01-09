@@ -44,14 +44,14 @@ import matplotlib
 
 matplotlib.use('Agg')  # 使用非交互式后端，适合服务器环境
 
-# SR模块导入
-from SR.models.noise_predictor import create_noise_predictor
-from SR.models.unet import UNetModelSwin
-from SR.ldm.models.autoencoder import VQModelTorch
-from SR.losses.basic_loss import L2Loss
-from SR.losses.lpips_loss import LPIPSLoss
-from SR.losses.gan_loss import GANLoss, create_discriminator
-from SR.datapipe.train_dataloader import create_train_dataloader
+# LPNSR模块导入
+from LPNSR.models.noise_predictor import create_noise_predictor
+from LPNSR.models.unet import UNetModelSwin
+from LPNSR.ldm.models.autoencoder import VQModelTorch
+from LPNSR.losses.basic_loss import L2Loss
+from LPNSR.losses.lpips_loss import LPIPSLoss
+from LPNSR.losses.gan_loss import GANLoss, create_discriminator
+from LPNSR.datapipe.train_dataloader import create_train_dataloader
 
 
 def get_named_eta_schedule(

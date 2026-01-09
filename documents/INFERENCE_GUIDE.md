@@ -3,7 +3,7 @@
 ## 📁 文件结构
 
 ```
-SR/
+LPNSR/
 ├── inference_noise_predictor.py          # 推理脚本（主文件）
 ├── check_inference.py                    # 环境检查脚本
 ├── configs/
@@ -26,25 +26,25 @@ SR/
 
 ```bash
 cd /Users/frozen2001/PycharmProjects/PythonProject
-python -m SR.check_inference
+python -m LPNSR.check_inference
 ```
 
 ### 2. 准备权重文件
 
 确保以下文件存在：
 
-- ✅ `SR/pretrained/best_model.pth` - 训练好的噪声预测器
-- ✅ `SR/pretrained/resshift_realsrx4_s4_v3.pth` - ResShift预训练权重
-- ✅ `SR/pretrained/autoencoder_vq_f4.pth` - VAE权重
+- ✅ `LPNSR/pretrained/best_model.pth` - 训练好的噪声预测器
+- ✅ `LPNSR/pretrained/resshift_realsrx4_s4_v3.pth` - ResShift预训练权重
+- ✅ `LPNSR/pretrained/autoencoder_vq_f4.pth` - VAE权重
 
 ### 3. 运行推理
 
 ```bash
 # 处理单张图像
-python -m SR.inference_noise_predictor --input path/to/lr_image.png --output SR/results
+python -m LPNSR.inference_noise_predictor --input path/to/lr_image.png --output LPNSR/results
 
 # 处理整个文件夹
-python -m SR.inference_noise_predictor --input path/to/lr_images/ --output results
+python -m LPNSR.inference_noise_predictor --input path/to/lr_images/ --output results
 ```
 
 ---
@@ -104,13 +104,13 @@ inference:
 
 ```bash
 # 快速模式（4步）
-python -m SR.inference_noise_predictor -i input/ -o output/ --num_steps 4
+python -m LPNSR.inference_noise_predictor -i input/ -o output/ --num_steps 4
 
 # 标准模式（8步）
-python -m SR.inference_noise_predictor -i input/ -o output/ --num_steps 8
+python -m LPNSR.inference_noise_predictor -i input/ -o output/ --num_steps 8
 
 # 高质量模式（15步）
-python -m SR.inference_noise_predictor -i input/ -o output/ --num_steps 15
+python -m LPNSR.inference_noise_predictor -i input/ -o output/ --num_steps 15
 ```
 
 ---
@@ -120,7 +120,7 @@ python -m SR.inference_noise_predictor -i input/ -o output/ --num_steps 15
 ### 示例1：基本使用
 
 ```bash
-python -m SR.inference_noise_predictor \
+python -m LPNSR.inference_noise_predictor \
     --input test_images/lr_001.png \
     --output results/
 ```
@@ -128,7 +128,7 @@ python -m SR.inference_noise_predictor \
 ### 示例2：批量处理
 
 ```bash
-python -m SR.inference_noise_predictor \
+python -m LPNSR.inference_noise_predictor \
     --input test_images/ \
     --output results/
 ```
@@ -136,7 +136,7 @@ python -m SR.inference_noise_predictor \
 ### 示例3：快速预览
 
 ```bash
-python -m SR.inference_noise_predictor \
+python -m LPNSR.inference_noise_predictor \
     --input test_images/ \
     --output results/ \
     --num_steps 4
@@ -145,7 +145,7 @@ python -m SR.inference_noise_predictor \
 ### 示例4：高质量输出
 
 ```bash
-python -m SR.inference_noise_predictor \
+python -m LPNSR.inference_noise_predictor \
     --input test_images/ \
     --output results/ \
     --num_steps 15
@@ -154,7 +154,7 @@ python -m SR.inference_noise_predictor \
 ### 示例5：使用CPU
 
 ```bash
-python -m SR.inference_noise_predictor \
+python -m LPNSR.inference_noise_predictor \
     --input test_images/ \
     --output results/ \
     --device cpu
@@ -231,7 +231,7 @@ inference:
 
 或使用CPU：
 ```bash
-python -m SR.inference_noise_predictor -i input/ -o output/ --device cpu
+python -m LPNSR.inference_noise_predictor -i input/ -o output/ --device cpu
 ```
 
 ### Q2: 推理速度慢
@@ -239,7 +239,7 @@ python -m SR.inference_noise_predictor -i input/ -o output/ --device cpu
 **解决方案**：
 ```bash
 # 减少采样步数
-python -m SR.inference_noise_predictor -i input/ -o output/ --num_steps 4
+python -m LPNSR.inference_noise_predictor -i input/ -o output/ --num_steps 4
 ```
 
 ### Q3: 结果有拼接痕迹
@@ -254,7 +254,7 @@ inference:
 ### Q4: 找不到模型文件
 
 **解决方案**：
-1. 检查文件是否存在：`ls -lh SR/pretrained/`
+1. 检查文件是否存在：`ls -lh LPNSR/pretrained/`
 2. 确认配置文件中的路径正确
 3. 使用绝对路径
 

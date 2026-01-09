@@ -14,7 +14,7 @@
 ## 📁 文件结构
 
 ```
-SR/
+LPNSR/
 ├── train_noise_predictor.py          # 训练脚本（已完成）
 ├── configs/
 │   ├── train_noise_predictor.yaml    # 训练配置文件
@@ -43,12 +43,12 @@ SR/
 
 ```bash
 # 创建数据目录
-mkdir -p SR/traindata SR/valdata
+mkdir -p LPNSR/traindata LPNSR/valdata
 
 # 将HR图像复制到目录中
 # 支持的格式：.png, .jpg, .jpeg, .bmp, .tiff, .webp
-cp /path/to/your/hr/images/*.png SR/traindata/
-cp /path/to/your/val/images/*.png SR/valdata/
+cp /path/to/your/hr/images/*.png LPNSR/traindata/
+cp /path/to/your/val/images/*.png LPNSR/valdata/
 ```
 
 **注意：**
@@ -58,16 +58,16 @@ cp /path/to/your/val/images/*.png SR/valdata/
 
 ### 2. 检查配置文件
 
-编辑 `SR/configs/train_noise_predictor.yaml`：
+编辑 `LPNSR/configs/train_noise_predictor.yaml`：
 
 ```yaml
 # 数据设置
 data:
   train:
-    hr_dir: "SR/traindata"  # 训练数据目录
+    hr_dir: "LPNSR/traindata"  # 训练数据目录
     crop_size: 256          # 裁剪大小
   val:
-    hr_dir: "SR/valdata"    # 验证数据目录
+    hr_dir: "LPNSR/valdata"    # 验证数据目录
 
 # 训练设置
 training:
@@ -93,11 +93,11 @@ optimizer:
 
 ```bash
 # 从头开始训练
-python -m SR.train_noise_predictor --config SR/configs/train_noise_predictor.yaml
+python -m LPNSR.train_noise_predictor --config LPNSR/configs/train_noise_predictor.yaml
 
 # 从checkpoint恢复训练
-python -m SR.train_noise_predictor --config SR/configs/train_noise_predictor.yaml 
---resume SR/experiments/noise_predictor/checkpoints/checkpoint_epoch_50.pth
+python -m LPNSR.train_noise_predictor --config LPNSR/configs/train_noise_predictor.yaml 
+--resume LPNSR/experiments/noise_predictor/checkpoints/checkpoint_epoch_50.pth
 ```
 
 ### 4. 监控训练
@@ -130,8 +130,8 @@ Validation: 100%|████████| 50/50 [01:12<00:00,  1.45s/it, loss=0
   freq_loss: 0.0029
   stat_loss: 0.0014
 
-✓ Checkpoint已保存: SR/experiments/noise_predictor_e2e/checkpoints/checkpoint_epoch_1.pth
-✓ 最佳模型已保存: SR/experiments/noise_predictor_e2e/checkpoints/best_model.pth
+✓ Checkpoint已保存: LPNSR/experiments/noise_predictor_e2e/checkpoints/checkpoint_epoch_1.pth
+✓ 最佳模型已保存: LPNSR/experiments/noise_predictor_e2e/checkpoints/best_model.pth
 ```
 
 ## 📊 训练流程详解
@@ -295,9 +295,9 @@ scheduler:
 ### 恢复训练
 
 ```bash
-python -m SR.train_noise_predictor \
-    --config SR/configs/train_noise_predictor.yaml \
-    --resume SR/experiments/noise_predictor_e2e/checkpoints/checkpoint_epoch_50.pth
+python -m LPNSR.train_noise_predictor \
+    --config LPNSR/configs/train_noise_predictor.yaml \
+    --resume LPNSR/experiments/noise_predictor_e2e/checkpoints/checkpoint_epoch_50.pth
 ```
 
 恢复训练会：
@@ -404,13 +404,13 @@ training:
 
 使用最佳模型进行推理：
 ```python
-from SR.train_noise_predictor import NoisePredictorTrainer
+from LPNSR.train_noise_predictor import NoisePredictorTrainer
 
 # 加载训练器
-trainer = NoisePredictorTrainer('SR/configs/train_noise_predictor.yaml')
+trainer = NoisePredictorTrainer('LPNSR/configs/train_noise_predictor.yaml')
 
 # 加载最佳模型
-trainer.load_checkpoint('SR/experiments/noise_predictor_e2e/checkpoints/best_model.pth')
+trainer.load_checkpoint('LPNSR/experiments/noise_predictor_e2e/checkpoints/best_model.pth')
 
 # 进行推理
 # ...
@@ -423,12 +423,12 @@ trainer.load_checkpoint('SR/experiments/noise_predictor_e2e/checkpoints/best_mod
 import torch
 
 # 加载checkpoint
-ckpt = torch.load('SR/experiments/noise_predictor_e2e/checkpoints/best_model.pth')
+ckpt = torch.load('LPNSR/experiments/noise_predictor_e2e/checkpoints/best_model.pth')
 
 # 保存噪声预测器权重
 torch.save(
     ckpt['noise_predictor'],
-    'SR/pretrained/noise_predictor_best.pth'
+    'LPNSR/pretrained/noise_predictor_best.pth'
 )
 ```
 
@@ -438,7 +438,7 @@ torch.save(
 ```python
 # 加载噪声预测器
 noise_predictor = create_noise_predictor(...)
-noise_predictor.load_state_dict(torch.load('SR/pretrained/noise_predictor_best.pth'))
+noise_predictor.load_state_dict(torch.load('LPNSR/pretrained/noise_predictor_best.pth'))
 
 # 在反向采样中使用
 # 替代：noise = torch.randn_like(x_t)
@@ -448,9 +448,9 @@ noise_predictor.load_state_dict(torch.load('SR/pretrained/noise_predictor_best.p
 ## 📚 参考资料
 
 - **ResShift论文**：[ResShift: Efficient Diffusion Model for Image Super-resolution by Residual Shifting](https://arxiv.org/abs/2307.12348)
-- **训练实现文档**：`SR/RESSHIFT_TRAINING_FINAL.md`
-- **扩散过程对比**：`SR/RESSHIFT_VS_DDPM.md`
-- **Gradient Checkpointing**：`SR/GRADIENT_CHECKPOINTING.md`
+- **训练实现文档**：`LPNSR/RESSHIFT_TRAINING_FINAL.md`
+- **扩散过程对比**：`LPNSR/RESSHIFT_VS_DDPM.md`
+- **Gradient Checkpointing**：`LPNSR/GRADIENT_CHECKPOINTING.md`
 
 ## 🎉 总结
 

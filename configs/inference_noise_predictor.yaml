@@ -3,9 +3,9 @@
 
 # 模型路径配置
 model:
-  noise_predictor_path: "SR/pretrained/best_model.pth"  # 训练好的噪声预测器权重
-  resshift_path: "SR/pretrained/resshift_realsrx4_s4_v3.pth"  # ResShift预训练权重
-  vae_path: "SR/pretrained/autoencoder_vq_f4.pth"  # VAE权重
+  noise_predictor_path: "LPNSR/pretrained/best_model.pth"  # 训练好的噪声预测器权重
+  resshift_path: "LPNSR/pretrained/resshift_realsrx4_s4_v3.pth"  # ResShift预训练权重
+  vae_path: "LPNSR/pretrained/autoencoder_vq_f4.pth"  # VAE权重
 
 # VAE配置（与训练时保持一致）
 vae:
@@ -40,7 +40,7 @@ resshift_unet:
 
 # 噪声预测器配置（与训练时保持一致）
 noise_predictor:
-  config_path: "SR/configs/noise_predictor_config.yaml"  # 使用更新后的配置文件
+  config_path: "LPNSR/configs/noise_predictor_config.yaml"  # 使用更新后的配置文件
 
 # 扩散过程配置（ResShift v3参数）
 diffusion:

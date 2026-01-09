@@ -11,7 +11,7 @@
 # ============================================================================
 experiment:
   name: "noise_predictor"
-  save_dir: "SR/experiments/noise_predictor"
+  save_dir: "LPNSR/experiments/noise_predictor"
   keep_recent_checkpoints: 5  # 保留最近N个checkpoint
   log_interval: 10000  # 每N步打印一次日志
   save_interval: 1  # 每N个epoch保存一次checkpoint
@@ -22,22 +22,22 @@ experiment:
 # ============================================================================
 resshift:
   # VAE配置文件路径
-  vae_config_path: "SR/configs/vqvae_config.yaml"
+  vae_config_path: "LPNSR/configs/vqvae_config.yaml"
 
   # VAE模型路径（冻结）
-  vae_path: "SR/pretrained/autoencoder_vq_f4.pth"
+  vae_path: "LPNSR/pretrained/autoencoder_vq_f4.pth"
 
   # UNet配置文件路径
-  unet_config_path: "SR/configs/unet_config.yaml"
+  unet_config_path: "LPNSR/configs/unet_config.yaml"
 
   # ResShift UNet模型路径（冻结）
-  unet_path: "SR/pretrained/resshift_realsrx4_s4_v3.pth"
+  unet_path: "LPNSR/pretrained/resshift_realsrx4_s4_v3.pth"
 
 # ============================================================================
 # 噪声预测器配置
 # ============================================================================
 noise_predictor:
-  config_path: "SR/configs/noise_predictor_config.yaml"  # 使用更新后的配置文件
+  config_path: "LPNSR/configs/noise_predictor_config.yaml"  # 使用更新后的配置文件
 
 # ============================================================================
 # 训练设置
@@ -121,7 +121,7 @@ training:
 data:
   # 训练数据
   train:
-    hr_dir: "SR/traindata"  # HR图像目录
+    hr_dir: "LPNSR/traindata"  # HR图像目录
     lr_dir: null  # LR图像目录（如果为null，则通过退化生成）
     crop_size: 256  # 裁剪大小（必须是256，与预训练ResShift模型匹配）
     scale: 4  # 超分倍数
@@ -143,7 +143,7 @@ data:
 # ============================================================================
 degradation:
   use_degradation: true  # 是否使用退化生成LR
-  config_path: "SR/configs/realesrgan_degradation.yaml"
+  config_path: "LPNSR/configs/realesrgan_degradation.yaml"
 
 # ============================================================================
 # 损失函数设置
