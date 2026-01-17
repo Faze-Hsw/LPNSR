@@ -36,7 +36,7 @@ from collections import OrderedDict
 sys.path.append(str(Path(__file__).parent.parent))
 
 # 导入推理器
-from LPNSR.inference_noise_predictor import NoisePredictorInference
+from LPNSR.inference import NoisePredictorInference
 
 
 class MetricsCalculator:
