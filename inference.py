@@ -381,22 +381,8 @@ class NoisePredictorInference:
 
         # 加载权重
         noise_ckpt = torch.load(self.config['model']['noise_predictor_path'], map_location='cpu')
-
-        # 智能处理不同的checkpoint格式
-        if isinstance(noise_ckpt, dict):
-            if 'noise_predictor' in noise_ckpt:
-                # 完整训练checkpoint格式（checkpoint_epoch_*.pth）
-                state_dict = noise_ckpt['noise_predictor']
-                print(f"  从训练checkpoint加载 (epoch {noise_ckpt.get('epoch', 'unknown')})")
-            elif 'model_state_dict' in noise_ckpt:
-                # 标准格式
-                state_dict = noise_ckpt['model_state_dict']
-            else:
-                # 直接是state_dict（best_model.pth的新格式）
-                state_dict = noise_ckpt
-                print(f"  从best_model.pth加载（仅权重）")
-        else:
-            raise ValueError(f"不支持的checkpoint格式: {type(noise_ckpt)}")
+        state_dict = noise_ckpt
+        print(f" 从noise_predictor.pth加载（仅权重）")
 
         self.noise_predictor.load_state_dict(state_dict, strict=True)
         self.noise_predictor = self.noise_predictor.to(self.device)
@@ -667,10 +653,6 @@ class NoisePredictorInference:
         # 5. clamp到有效范围，防止颜色溢出
         sr_tensor = torch.clamp(sr_tensor, -1.0, 1.0)
 
-        # 6. 【颜色校正】使用小波重建校正颜色偏移
-        if self.color_correction:
-            sr_tensor = self._color_correction(sr_tensor, lr_upsampled)
-
         return sr_tensor
 
     def prior_sample(self, y, noise=None):
@@ -839,6 +821,16 @@ class NoisePredictorInference:
             with context():
                 sr_tensor = self.sample_func(lr_tensor)
 
+        #进行颜色校正
+        if self.color_correction:
+            lr_upsampled_full = F.interpolate(
+                lr_tensor,
+                scale_factor=self.scale_factor,
+                mode='bicubic',
+                align_corners=False
+            )
+            sr_tensor = self._color_correction(sr_tensor, lr_upsampled_full)
+            print(f"  ✓ 对图像应用颜色校正")
         # 5. 反归一化到[0, 1]（sr_tensor已在sample_func中clamp到[-1,1]）
         sr_tensor = sr_tensor * 0.5 + 0.5
         # 额外clamp确保在[0, 1]范围内
