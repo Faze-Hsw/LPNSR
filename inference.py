@@ -35,6 +35,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 # LPNSR模块导入
 from LPNSR.models.noise_predictor import create_noise_predictor
+from LPNSR.models.initializer import create_initializer
 from LPNSR.models.unet import UNetModelSwin
 from LPNSR.ldm.models.autoencoder import VQModelTorch
 
@@ -96,7 +97,7 @@ def space_timesteps(num_timesteps, sample_timesteps):
 
 
 class ImageSpliterTh:
-    """图像分块处理类（用于处理大图像）"""
+    """图像分块处理类（使用高斯加权聚合）"""
 
     def __init__(self, im, pch_size, stride, sf=1, extra_bs=1):
         '''
@@ -112,6 +113,8 @@ class ImageSpliterTh:
         self.sf = sf
         self.extra_bs = extra_bs
 
+        self.dtype = torch.float64
+
         bs, chn, height, width = im.shape
         self.true_bs = bs
 
@@ -126,9 +129,10 @@ class ImageSpliterTh:
         self.count_pchs = 0
 
         self.im_ori = im
-        self.device = im.device  # 保存原始设备
-        self.im_res = torch.zeros([bs, chn, height * sf, width * sf], dtype=im.dtype, device='cpu')
-        self.pixel_count = torch.zeros([bs, chn, height * sf, width * sf], dtype=im.dtype, device='cpu')
+        self.device = im.device
+        # 使用float64精度进行累加
+        self.im_res = torch.zeros([bs, chn, height * sf, width * sf], dtype=self.dtype, device='cpu')
+        self.pixel_count = torch.zeros([bs, chn, height * sf, width * sf], dtype=self.dtype, device='cpu')
 
     def extract_starts(self, length):
         if length <= self.pch_size:
@@ -172,20 +176,49 @@ class ImageSpliterTh:
 
         return pch, index_infos
 
+    @staticmethod
+    def generate_kernel_1d(ksize):
+        """生成1D高斯核"""
+        sigma = 0.3 * ((ksize - 1) * 0.5 - 1) + 0.8  # opencv default setting
+        if ksize % 2 == 0:
+            kernel = cv2.getGaussianKernel(ksize=ksize+1, sigma=sigma, ktype=cv2.CV_64F)
+            kernel = kernel[1:, ]
+        else:
+            kernel = cv2.getGaussianKernel(ksize=ksize, sigma=sigma, ktype=cv2.CV_64F)
+        return kernel
+
+    def get_weight(self, height, width):
+        """生成2D高斯权重矩阵"""
+        kernel_h = self.generate_kernel_1d(height).reshape(-1, 1)
+        kernel_w = self.generate_kernel_1d(width).reshape(1, -1)
+        kernel = np.matmul(kernel_h, kernel_w)
+        kernel = torch.from_numpy(kernel).unsqueeze(0).unsqueeze(0)  # 1 x 1 x height x width
+        return kernel.to(dtype=self.dtype, device=self.im_res.device)
+
     def update(self, pch_res, index_infos):
         '''
+        使用高斯加权聚合patch结果
+        
         Input:
             pch_res: (n*extra_bs) x c x pch_size x pch_size, float
             index_infos: [(h_start, h_end, w_start, w_end),]
         '''
         assert pch_res.shape[0] % self.true_bs == 0
-        pch_res_cpu = pch_res.cpu()
-        pch_list = torch.split(pch_res_cpu, self.true_bs, dim=0)
+        pch_list = torch.split(pch_res, self.true_bs, dim=0)
         assert len(pch_list) == len(index_infos)
+        
         for ii, (h_start, h_end, w_start, w_end) in enumerate(index_infos):
             current_pch = pch_list[ii]
-            self.im_res[:, :, h_start:h_end, w_start:w_end] += current_pch
-            self.pixel_count[:, :, h_start:h_end, w_start:w_end] += 1
+            # 获取当前patch的设备
+            current_device = current_pch.device
+            # 生成高斯权重（在与patch相同的设备上）
+            current_weight = self.get_weight(current_pch.shape[-2], current_pch.shape[-1]).to(current_device)
+            # 转换为float64并进行加权累加
+            weighted_pch = (current_pch * current_weight).type(self.dtype).cpu()
+            weighted_weight = current_weight.type(self.dtype).cpu()
+            # 累加到结果
+            self.im_res[:, :, h_start:h_end, w_start:w_end] += weighted_pch
+            self.pixel_count[:, :, h_start:h_end, w_start:w_end] += weighted_weight
 
     def gather(self):
         assert torch.all(self.pixel_count != 0)
@@ -228,7 +261,8 @@ class NoisePredictorInference:
         self.chop_stride = self.config['inference']['chop_stride']
         self.chop_bs = self.config['inference']['chop_bs']
         self.use_amp = self.config['inference']['use_amp']
-        self.use_random_noise = self.config['inference'].get('use_random_noise', False)
+        self.use_noise_predictor = self.config['inference'].get('use_noise_predictor', True)
+        self.use_initializer = self.config['inference'].get('use_initializer', True)
 
         # 颜色校正配置（解决超分后图像颜色偏移问题）
         self.color_correction = self.config['inference'].get('color_correction', True)
@@ -239,6 +273,8 @@ class NoisePredictorInference:
         print(f"  - Chop尺寸: {self.chop_size}x{self.chop_size}")
         print(f"  - Chop步长: {self.chop_stride}")
         print(f"  - 颜色校正: {'启用' if self.color_correction else '禁用'}")
+        print(f"  - 初始化器: {'启用' if self.use_initializer  else '禁用'}")
+        print(f"  - 噪声预测器: {'启用' if self.use_noise_predictor else '禁用'}")
 
     def _init_models(self):
         """初始化模型"""
@@ -390,6 +426,52 @@ class NoisePredictorInference:
         for param in self.noise_predictor.parameters():
             param.requires_grad = False
         print("  ✓ 噪声预测器加载完成")
+
+        # 4. 加载初始化器
+        self.initializer = None
+        if self.config['model'].get('initializer_path') and self.config.get('initializer'):
+            print("  加载初始化器...")
+            initializer_config = self.config['initializer']
+
+            # 如果指定了配置文件路径，则加载配置
+            if 'config_path' in initializer_config:
+                with open(initializer_config['config_path'], 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f)
+                # 使用配置文件中的参数
+                self.initializer = create_initializer(
+                    latent_channels=config['latent_channels'],
+                    model_channels=config['model_channels'],
+                    channel_mult=tuple(config['channel_mult']),
+                    num_res_blocks=config['num_res_blocks'],
+                    growth_rate=config['growth_rate'],
+                    res_scale=config['res_scale'],
+                    double_z=config['double_z']
+                )
+            else:
+                # 使用直接指定的参数
+                self.initializer = create_initializer(
+                    latent_channels=initializer_config['latent_channels'],
+                    model_channels=initializer_config['model_channels'],
+                    channel_mult=tuple(initializer_config['channel_mult']),
+                    num_res_blocks=initializer_config['num_res_blocks'],
+                    growth_rate=initializer_config.get('growth_rate', 32),
+                    res_scale=initializer_config.get('res_scale', 0.1),
+                    double_z=initializer_config.get('double_z', True)
+                )
+
+            # 加载权重
+            initializer_ckpt = torch.load(self.config['model']['initializer_path'], map_location='cpu')
+            state_dict = initializer_ckpt
+            print(f"  从initializer.pth加载（仅权重）")
+
+            self.initializer.load_state_dict(state_dict, strict=True)
+            self.initializer = self.initializer.to(self.device)
+            self.initializer.eval()
+            for param in self.initializer.parameters():
+                param.requires_grad = False
+            print("  ✓ 初始化器加载完成")
+        else:
+            print("  初始化器未启用（未找到配置或权重路径）")
 
     def _init_diffusion(self):
         """
@@ -659,10 +741,6 @@ class NoisePredictorInference:
         """
         从先验分布采样，即 q(x_T|y) ~= N(x_T|y, κ²η_T)
 
-        【重要】初始化和中间步骤保持一致：
-        - use_random_noise=True: 都用随机噪声
-        - use_random_noise=False: 都用噪声预测器
-
         Args:
             y: 退化图像的潜在表示（lr_latent）
             noise: 可选的噪声
@@ -671,11 +749,17 @@ class NoisePredictorInference:
             x_T: 初始采样
         """
         # 使用最后一个时间步（即num_steps-1，对应原始的最大时间步）
-        t = torch.tensor([self.num_steps - 1] * y.shape[0], device=y.device).long()
+        t = torch.tensor([self.num_steps - 1] * y.shape[0], device=self.device).long()
 
         if noise is None:
-            # 初始化时总是使用随机高斯噪声（不使用噪声预测器）
-            noise = torch.randn_like(y)
+            # 选择初始化方式
+            if self.initializer is not None and self.use_initializer:
+                # 使用initializer生成初始噪声
+                # initializer: (lr_latent, timesteps) -> noise
+                noise = self.initializer(y, t, sample_posterior=True)
+            else:
+                # 使用随机高斯噪声（原始ResShift）
+                noise = torch.randn_like(y)
 
         return y + self._extract_into_tensor(self.kappa * self.sqrt_etas, t, y.shape) * noise
 
@@ -717,14 +801,14 @@ class NoisePredictorInference:
             mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0, x_t, t_tensor)
 
             # 4. 生成噪声
-            # 根据use_random_noise选择中间采样的噪声来源
-            if self.use_random_noise:
-                # 使用随机高斯噪声
-                noise = torch.randn_like(x_t)
-            else:
+            # 根据use_noise_predictor选择中间采样的噪声来源
+            if self.use_noise_predictor:
                 # 使用噪声预测器预测噪声
                 # EDSR-Unet噪声预测器需要(z_t, lr_latent, timestep)作为输入
                 noise = self.noise_predictor(x_t, lr_latent, t_tensor, sample_posterior=True)
+            else:
+                # 使用随机高斯噪声
+                noise = torch.randn_like(x_t)
 
             # 5. 采样x_{t-1}：当t>0时添加噪声，t=0时直接使用均值
             nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
@@ -931,9 +1015,14 @@ def get_parser():
         help="采样步数（覆盖配置文件）"
     )
     parser.add_argument(
-        "--use_random_noise",
+        "--disable_noise_predictor",
         action="store_true",
-        help="使用随机噪声（原始ResShift方式）而非噪声预测器"
+        help="禁用噪声预测器，使用随机噪声（原始ResShift方式）"
+    )
+    parser.add_argument(
+        "--disable_initializer",
+        action="store_true",
+        help="禁用初始化器，使用随机噪声初始化"
     )
 
     return parser
@@ -962,14 +1051,15 @@ def main():
         print(f"采样步数已覆盖为: {args.num_steps}")
 
     # 覆盖噪声模式
-    if args.use_random_noise:
-        inferencer.use_random_noise = True
+    if args.disable_noise_predictor:
+        inferencer.use_noise_predictor = False
+    if args.disable_initializer:
+        inferencer.use_initializer = False
 
     # 打印最终的噪声策略
-    if inferencer.use_random_noise:
-        print(f"噪声策略: 初始化(x_T)使用随机高斯噪声 + 中间采样使用随机高斯噪声")
-    else:
-        print(f"噪声策略: 初始化(x_T)使用随机高斯噪声 + 中间采样使用噪声预测器")
+    print(f"\n推理策略:")
+    print(f"  - 初始化(x_T): {'初始化器' if inferencer.use_initializer  else '随机高斯噪声'}")
+    print(f"  - 中间采样: {'噪声预测器' if inferencer.use_noise_predictor else '随机高斯噪声'}")
 
     # 执行推理
     inferencer.inference(args.input, args.output)

@@ -6,6 +6,7 @@ model:
   noise_predictor_path: "LPNSR/pretrained/noise_predictor.pth"  # 训练好的噪声预测器权重
   resshift_path: "LPNSR/pretrained/resshift_realsrx4_s4_v3.pth"  # ResShift预训练权重
   vae_path: "LPNSR/pretrained/autoencoder_vq_f4.pth"  # VAE权重
+  initializer_path: "LPNSR/pretrained/initializer.pth"  # 训练好的初始化器权重
 
 # VAE配置（与训练时保持一致）
 vae:
@@ -42,6 +43,10 @@ resshift_unet:
 noise_predictor:
   config_path: "LPNSR/configs/noise_predictor_config.yaml"  # 使用更新后的配置文件
 
+# 初始化器配置（与训练时保持一致）
+initializer:
+  config_path: "LPNSR/configs/initializer_config.yaml"  # 初始化器配置文件
+
 # 扩散过程配置（ResShift v3参数）
 diffusion:
   num_timesteps: 4  # ResShift v3使用4步（注意：这里直接设置为采样步数）
@@ -58,9 +63,10 @@ diffusion:
 inference:
   num_steps: 4  # 采样步数（与ResShift v3一致）
   scale_factor: 4  # 超分倍数
-  
+
   # 噪声生成方式
-  use_random_noise: false  # true: 使用随机噪声(原始ResShift), false: 使用噪声预测器
+  use_noise_predictor: true  # true: 使用噪声预测器生成中间噪声, false: 使用随机噪声(原始ResShift)
+  use_initializer: true  # true: 使用初始化器生成初始噪声, false: 使用随机噪声
 
   #颜色校正
   color_correction: true
@@ -70,7 +76,7 @@ inference:
   
   # Chop分块配置（处理大图像）
   chop_size: 256  # 分块大小
-  chop_stride: 224  # 分块步长
+  chop_stride: 128  # 分块步长
   chop_bs: 1  # 每次处理的分块数
   
   # 设备配置

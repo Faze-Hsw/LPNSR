@@ -180,14 +180,8 @@ class NoisePredictorTrainer:
 
         # 1. 加载VQVAE（冻结）
         print("\n加载VQVAE...")
-        vae_config_path = self.config['resshift']['vae_config_path']
         vae_path = self.config['resshift']['vae_path']
 
-        # 加载VAE配置
-        with open(vae_config_path, 'r', encoding='utf-8') as f:
-            vae_config = yaml.safe_load(f)
-
-        # VQVAE模型结构参数（与预训练权重一致）
         ddconfig = {
             'double_z': False,
             'z_channels': 3,
@@ -202,14 +196,17 @@ class NoisePredictorTrainer:
             'padding_mode': 'zeros',
         }
 
-        lora_config = vae_config.get('lora', {})
+        lora_rank = 8
+        lora_alpha = 1.0
+        lora_tune_decoder = False
+
         self.vae = VQModelTorch(
             ddconfig=ddconfig,
             n_embed=8192,
             embed_dim=3,
-            rank=lora_config.get('rank', 8),
-            lora_alpha=lora_config.get('alpha', 1.0),
-            lora_tune_decoder=lora_config.get('tune_decoder', False),
+            rank=lora_rank,
+            lora_alpha=lora_alpha,
+            lora_tune_decoder=lora_tune_decoder,
         ).to(self.device)
 
         # 加载预训练权重
@@ -237,24 +234,14 @@ class NoisePredictorTrainer:
 
         # 2. 加载ResShift UNet（冻结）
         print("\n加载ResShift UNet...")
-        unet_config_path = self.config['resshift']['unet_config_path']
         unet_path = self.config['resshift']['unet_path']
 
-        # 加载UNet配置
-        with open(unet_config_path, 'r', encoding='utf-8') as f:
-            unet_config = yaml.safe_load(f)
-
-        # 从配置文件计算潜在空间尺寸
-        # crop_size / VAE下采样倍数 = 潜在空间尺寸
-        # 注意：VAE下采样倍数由VAE架构决定（ch_mult: [1,2,4] → 2^2=4倍）
-        # 这个值必须与预训练VAE权重一致，不能随意修改
         crop_size = self.config['data']['train']['crop_size']
-        vae_downsample_factor = 4  # 由VAE的ch_mult长度决定：2^(len(ch_mult)-1) = 2^2 = 4
+        vae_downsample_factor = 4
         latent_size = crop_size // vae_downsample_factor
 
-        # UNet模型结构参数（与预训练权重一致）
         model_structure = {
-            'image_size': latent_size,  # 动态计算，而非硬编码
+            'image_size': latent_size,
             'in_channels': 3,
             'model_channels': 160,
             'out_channels': 3,
@@ -269,17 +256,16 @@ class NoisePredictorTrainer:
             'window_size': 8,
             'mlp_ratio': 4,
             'cond_lq': True,
-            'lq_size': latent_size,  # 也需要动态计算
+            'lq_size': latent_size,
         }
 
-        # 合并配置
         model_config = {
             **model_structure,
-            'dropout': unet_config.get('dropout', 0.0),
-            'use_fp16': unet_config.get('use_fp16', False),
-            'conv_resample': unet_config.get('conv_resample', True),
-            'dims': unet_config.get('dims', 2),
-            'patch_norm': unet_config.get('patch_norm', False),
+            'dropout': 0.0,
+            'use_fp16': False,
+            'conv_resample': True,
+            'dims': 2,
+            'patch_norm': False,
         }
 
         self.resshift_unet = UNetModelSwin(**model_config).to(self.device)
@@ -785,8 +771,8 @@ class NoisePredictorTrainer:
                 # 计算基线损失
                 baseline_l2 = F.mse_loss(pred_x0_random, z_start).item()
                 current_l2 = F.mse_loss(final_pred_x0, z_start).item()
-                baseline_lpips = self.lpips_loss(self.vae.decode(pred_x0_random), self.vae.decode(z_start)).item()
-                current_lpips = self.lpips_loss(self.vae.decode(final_pred_x0), self.vae.decode(z_start)).item()
+                baseline_lpips = self.lpips_loss(self.vae.decode(pred_x0_random)*0.5+0.5, self.vae.decode(z_start)*0.5+0.5).item()
+                current_lpips = self.lpips_loss(self.vae.decode(final_pred_x0)*0.5+0.5, self.vae.decode(z_start)*0.5+0.5).item()
 
                 # 计算改进百分比
                 improvement = (baseline_l2 - current_l2) / baseline_l2 * 100
@@ -874,15 +860,9 @@ class NoisePredictorTrainer:
         self.current_epoch = epoch
         self.epoch_step = 0
 
-        # 获取梯度累积步数
-        gradient_accumulation_steps = self.config['training'].get('gradient_accumulation_steps', 1)
-
         total_loss_dict = {}
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch}/{self.config['training']['num_epochs']}")
-
-        # 在epoch开始时清零梯度
-        self.optimizer.zero_grad()
 
         for step, batch in enumerate(pbar):
             self.epoch_step = step
@@ -890,11 +870,8 @@ class NoisePredictorTrainer:
             hr_images = batch['gt'].to(self.device)  # [B, 3, H, W], [0, 1]
             lr_images = batch['lq'].to(self.device)  # [B, 3, H, W], [0, 1]
 
-            # 判断是否为梯度累积的最后一步（需要执行optimizer.step()）
-            is_update_step = (step + 1) % gradient_accumulation_steps == 0 or (step + 1) == len(self.train_loader)
-
             # 训练一步
-            loss_dict = self.train_step(hr_images, lr_images, is_update_step=is_update_step)
+            loss_dict = self.train_step(hr_images, lr_images)
 
             # 累积损失
             for key, value in loss_dict.items():
@@ -924,14 +901,23 @@ class NoisePredictorTrainer:
 
         return avg_loss_dict
 
-    def train_step(self, hr_images, lr_images, is_update_step=True):
+    def freeze_model(self, model):
+        """冻结模型参数"""
+        for param in model.parameters():
+            param.requires_grad = False
+
+    def unfreeze_model(self, model):
+        """解冻模型参数"""
+        for param in model.parameters():
+            param.requires_grad = True
+
+    def train_step(self, hr_images, lr_images):
         """
         单步训练（类似 ResShift 和 InvSR），支持梯度累计
 
         Args:
             hr_images: HR图像 [B, 3, H, W], 范围[0, 1]
             lr_images: LR图像 [B, 3, H, W], 范围[0, 1]
-            is_update_step: 是否为梯度累计的最后一步（需要执行optimizer.step()）
 
         Returns:
             loss_dict: 损失字典
@@ -939,9 +925,11 @@ class NoisePredictorTrainer:
         self.noise_predictor.train()
         batch_size = hr_images.shape[0]
 
-        # 获取梯度累积步数
-        gradient_accumulation_steps = self.config['training'].get('gradient_accumulation_steps', 1)
         loss_config = self.config['loss']
+
+        # 获取判别器更新频率（实现真正的交替训练）
+        disc_update_freq = loss_config.get('disc_update_freq', 1)
+        should_update_disc = (self.global_step % disc_update_freq == 0)
 
         # 1. 编码到潜在空间（冻结的VAE）
         with torch.no_grad():
@@ -959,60 +947,20 @@ class NoisePredictorTrainer:
             )
             z_y = self.vae.encode(lr_images_upsampled)
 
-        # 2. 计算生成器损失（噪声预测器 + 多步训练损失）
+        # 2. 先计算生成器损失（总是需要计算，为判别器提供假图像）
         if self.config['training']['use_amp']:
             with autocast(device_type='cuda'):
                 loss, loss_dict = self.multi_step_training_loss(
                     z_start, z_y, lr_images_norm
                 )
-
-            # 梯度累计：loss除以累积步数，保持梯度量级一致
-            scaled_loss = loss / gradient_accumulation_steps
-
-            # 反向传播（AMP）- 梯度会累积
-            self.scaler_g.scale(scaled_loss).backward()
-
-            # 只在累积完成后执行optimizer.step()
-            if is_update_step:
-                # 梯度裁剪
-                if self.config['training']['gradient_clip'] > 0:
-                    self.scaler_g.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self.noise_predictor.parameters(),
-                        self.config['training']['gradient_clip']
-                    )
-
-                self.scaler_g.step(self.optimizer)
-                self.scaler_g.update()
-                self.optimizer.zero_grad()  # 更新后清零梯度
         else:
             loss, loss_dict = self.multi_step_training_loss(
                 z_start, z_y, lr_images_norm
             )
 
-            # 梯度累计：loss除以累积步数，保持梯度量级一致
-            scaled_loss = loss / gradient_accumulation_steps
-
-            # 反向传播 - 梯度会累积
-            scaled_loss.backward()
-
-            # 只在累积完成后执行optimizer.step()
-            if is_update_step:
-                # 梯度裁剪
-                if self.config['training']['gradient_clip'] > 0:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.noise_predictor.parameters(),
-                        self.config['training']['gradient_clip']
-                    )
-
-                self.optimizer.step()
-                self.optimizer.zero_grad()  # 更新后清零梯度
-
-        # 3. 训练判别器（每个step计算loss并累积梯度，只在is_update_step时更新参数）
-        if (self.discriminator is not None and
-                self.optimizer_d is not None and
-                loss_config.get('gan_weight', 0) > 0):
-
+        # 3. 真正的交替训练逻辑
+        if should_update_disc and self.discriminator is not None and loss_config.get('gan_weight', 0) > 0:
+            # === 这个step只更新判别器 ===
             disc_start_epoch = loss_config.get('disc_start_epoch', 0)
             if self.current_epoch >= disc_start_epoch:
                 # 获取生成器产生的图像（已在multi_step_training_loss中保存）
@@ -1022,7 +970,11 @@ class NoisePredictorTrainer:
 
                     self.discriminator.train()
 
-                    # 每个step都计算判别器损失并累积梯度
+                    # 冻结生成器，解冻判别器
+                    self.freeze_model(self.noise_predictor)
+                    self.unfreeze_model(self.discriminator)
+
+                    # 计算判别器损失
                     if self.config['training']['use_amp']:
                         with autocast(device_type='cuda'):
                             # 判别真实图像
@@ -1035,9 +987,18 @@ class NoisePredictorTrainer:
 
                             d_loss = (d_loss_real + d_loss_fake) / 2
 
-                        # 梯度累积：loss除以累积步数
-                        scaled_d_loss = d_loss / gradient_accumulation_steps
-                        self.scaler_d.scale(scaled_d_loss).backward()
+                        self.scaler_d.scale(d_loss).backward()
+
+                        # 梯度裁剪
+                        if self.config['training']['gradient_clip'] > 0:
+                            self.scaler_d.unscale_(self.optimizer_d)
+                            torch.nn.utils.clip_grad_norm_(
+                                self.discriminator.parameters(),
+                                self.config['training']['gradient_clip']
+                            )
+                        self.scaler_d.step(self.optimizer_d)
+                        self.scaler_d.update()
+                        self.optimizer_d.zero_grad()
                     else:
                         # 判别真实图像
                         real_pred = self.discriminator(real_image)
@@ -1049,23 +1010,63 @@ class NoisePredictorTrainer:
 
                         d_loss = (d_loss_real + d_loss_fake) / 2
 
-                        # 梯度累积：loss除以累积步数
-                        scaled_d_loss = d_loss / gradient_accumulation_steps
-                        scaled_d_loss.backward()
+                        d_loss.backward()
 
-                    # 记录损失（每个step都记录）
+                        # 梯度裁剪
+                        if self.config['training']['gradient_clip'] > 0:
+                            torch.nn.utils.clip_grad_norm_(
+                                self.discriminator.parameters(),
+                                self.config['training']['gradient_clip']
+                            )
+                        self.optimizer_d.step()
+                        self.optimizer_d.zero_grad()
+
+                    # 记录损失
                     loss_dict['d_loss'] = d_loss.item()
                     loss_dict['d_loss_real'] = d_loss_real.item()
                     loss_dict['d_loss_fake'] = d_loss_fake.item()
 
-                    # 只在累积完成后更新判别器参数
-                    if is_update_step:
-                        if self.config['training']['use_amp']:
-                            self.scaler_d.step(self.optimizer_d)
-                            self.scaler_d.update()  # 使用判别器专用的scaler更新
-                        else:
-                            self.optimizer_d.step()
-                        self.optimizer_d.zero_grad()  # 更新后清零梯度
+                # 恢复生成器参数状态
+                self.unfreeze_model(self.noise_predictor)
+        else:
+            # === 这个step只更新生成器 ===
+
+            # 冻结判别器，解冻生成器
+            if self.discriminator is not None:
+                self.freeze_model(self.discriminator)
+            self.unfreeze_model(self.noise_predictor)
+
+            # 反向传播生成器损失
+            if self.config['training']['use_amp']:
+                self.scaler_g.scale(loss).backward()
+
+                # 梯度裁剪
+                if self.config['training']['gradient_clip'] > 0:
+                    self.scaler_g.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.noise_predictor.parameters(),
+                        self.config['training']['gradient_clip']
+                    )
+
+                self.scaler_g.step(self.optimizer)
+                self.scaler_g.update()
+                self.optimizer.zero_grad()
+            else:
+                loss.backward()
+
+                # 梯度裁剪
+                if self.config['training']['gradient_clip'] > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.noise_predictor.parameters(),
+                        self.config['training']['gradient_clip']
+                    )
+
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+            # 恢复判别器参数状态
+            if self.discriminator is not None:
+                self.unfreeze_model(self.discriminator)
 
         return loss_dict
 
