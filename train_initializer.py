@@ -634,11 +634,13 @@ class InitializerTrainer:
             # 注意：pred_image 需要保留梯度以便感知损失能够反向传播到initializer
             # VAE虽然是冻结的，但梯度仍然可以通过它传回到 pred_x0
             pred_image = self.vae.decode(pred_x0)
+            pred_image = torch.clamp(pred_image, -1, 1)
             pred_image = pred_image * 0.5 + 0.5
 
             # gt_image 不需要梯度
             with torch.no_grad():
                 gt_image = self.vae.decode(z_start)
+                gt_image = torch.clamp(gt_image, -1, 1)
                 gt_image = gt_image * 0.5 + 0.5
 
             # LPIPS 感知损失（图像空间）

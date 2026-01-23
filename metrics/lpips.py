@@ -66,9 +66,9 @@ class LPIPS(nn.Module):
             img2 = img2.unsqueeze(0)
         
         # 归一化到[0, 1]
-        if img1.max() > 1.0:
+        if img1.max() > 5.0:
             img1 = img1 / 255.0
-        if img2.max() > 1.0:
+        if img2.max() > 5.0:
             img2 = img2 / 255.0
         
         # 归一化到[-1, 1]

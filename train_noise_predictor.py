@@ -726,11 +726,13 @@ class NoisePredictorTrainer:
             # 注意：pred_image 需要保留梯度以便感知损失能够反向传播到噪声预测器
             # VAE虽然是冻结的，但梯度仍然可以通过它传回到 final_pred_x0
             pred_image = self.vae.decode(final_pred_x0)  # [-1, 1]，保留梯度
+            pred_image = torch.clamp(pred_image, -1, 1)
             pred_image = pred_image*0.5+0.5
 
             # gt_image 不需要梯度
             with torch.no_grad():
                 gt_image = self.vae.decode(z_start)  # [-1, 1]
+                gt_image = torch.clamp(gt_image, -1, 1)
                 gt_image = gt_image*0.5+0.5
 
             # LPIPS 感知损失（图像空间）

@@ -40,7 +40,7 @@ def calculate_clipiqa(
             if img.ndim == 3 and input_order == 'HWC':
                 img = img.transpose(2, 0, 1)
             img = torch.from_numpy(img).float()
-            if img.max() > 1.0:
+            if img.max() > 5.0:
                 img = img / 255.0
         
         if img.ndim == 3:
@@ -91,7 +91,7 @@ class CLIPIQA(nn.Module):
             if img.ndim == 3 and self.input_order == 'HWC':
                 img = img.transpose(2, 0, 1)
             img = torch.from_numpy(img).float()
-            if img.max() > 1.0:
+            if img.max() > 5.0:
                 img = img / 255.0
         
         if img.ndim == 3:
