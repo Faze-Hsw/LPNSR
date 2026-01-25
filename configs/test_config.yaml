@@ -1,19 +1,12 @@
-# 测试配置文件
-# 用于评估超分辨率模型的性能
-
-# 数据路径配置
 data:
-  gt_folder: ""  # GT图像文件夹路径，如果为空则只计算无参考指标
-  lq_folder: ""  # LQ图像文件夹路径（必需）
-  output_folder: "./test_results"  # SR输出文件夹
+  gt_folder: ""
+  lq_folder: ""
+  output_folder: "./test_results"
 
-# 推理配置（指向推理配置文件）
 inference:
   config_path: "LPNSR/configs/inference.yaml"
 
-# 评估指标配置
 metrics:
-  # 是否计算各项指标
   calculate_psnr: true
   calculate_ssim: true
   calculate_lpips: true
@@ -21,26 +14,21 @@ metrics:
   calculate_pi: true
   calculate_clipiqa: true
   calculate_musiq: true
-  
-  # 指标计算参数
-  crop_border: 4  # 计算前裁剪的边界像素数（针对全参考指标）
-  test_y_channel: true  # 是否只在Y通道上测试PSNR/SSIM（针对彩色图像）
-  
-  # LPIPS配置
-  lpips_net: "alex"  # LPIPS使用的网络：'alex', 'vgg', 'squeeze'
-  
-  # 使用官方库（如果安装了的话）
-  use_pyiqa: true  # 是否使用pyiqa库（推荐）
 
-# 设备配置
-device: "cuda"  # 'cuda' 或 'cpu'
+  crop_border: 4
+  test_y_channel: true
 
-# 输出配置
+  lpips_net: "alex"
+
+  use_pyiqa: true
+
+device: "cuda"
+
 output:
-  save_sr_images: true  # 是否保存SR图像
-  save_metrics_csv: true  # 是否保存指标到CSV文件
-  save_metrics_json: true  # 是否保存指标到JSON文件
-  print_per_image: true  # 是否打印每张图像的指标
+  save_sr_images: true
+  save_metrics_csv: true
+  save_metrics_json: true
+  print_per_image: true
 
-# 随机种子
 seed: 12345
+

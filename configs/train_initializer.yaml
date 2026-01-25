@@ -1,9 +1,9 @@
 experiment:
   name: "initializer"
   save_dir: "LPNSR/experiments/initializer"
-  keep_recent_checkpoints: 3  # 保留最近N个checkpoint
-  log_interval: 5000  # 每N步打印一次日志
-  save_interval: 1  # 每N个epoch保存一次checkpoint
+  keep_recent_checkpoints: 3
+  log_interval: 5000
+  save_interval: 1
 
 resshift:
   vae_path: "LPNSR/pretrained/autoencoder_vq_f4.pth"
@@ -29,43 +29,43 @@ training:
 
   sampling_steps: 4
 
-  use_amp: true  # 混合精度训练
-  use_gradient_checkpointing: true  # 梯度检查点
-  gradient_clip: 1.0  # 梯度裁剪
+  use_amp: true
+  use_gradient_checkpointing: true
+  gradient_clip: 1.0
 
 data:
   train:
-    hr_dir: "LPNSR/traindata"  # HR图像目录
-    lr_dir: null  # LR图像目录（如果为null，则通过退化生成）
-    crop_size: 256  # 裁剪大小
-    scale: 4  # 超分倍数
+    hr_dir: "LPNSR/traindata"
+    lr_dir: null
+    crop_size: 256
+    scale: 4
     use_flip: true
     use_rot: true
     use_color_jitter: false
 
 degradation:
-  use_degradation: true  # 是否使用退化生成LR
+  use_degradation: true
   config_path: "LPNSR/configs/realesrgan_degradation.yaml"
 
 loss:
   l2_weight: 1.0
 
   lpips_weight: 2.0
-  lpips_net_type: 'alex'  # 可选: 'alex', 'vgg', 'squeeze'
+  lpips_net_type: 'alex'
 
-  gan_weight: 0.1  # GAN损失权重
-  gan_type: 'hinge'  # GAN类型: 'vanilla', 'lsgan', 'wgan', 'wgan-gp', 'hinge'
-  disc_type: 'patch'  # 判别器类型: 'patch', 'unet'
-  disc_ndf: 64  # 判别器基础通道数
-  disc_n_layers: 3  # 判别器层数（仅PatchGAN）
-  disc_norm_type: 'spectral'  # 判别器归一化类型: 'batch', 'instance', 'spectral', 'none'
-  disc_lr: 5.0e-5  # 判别器学习率
-  disc_start_epoch: 0  # 判别器开始训练的epoch
-  disc_update_freq: 2  # 判别器更新频率（2=交替更新，step 0,2,4更新判别器；step 1,3,5更新生成器）
+  gan_weight: 0.1
+  gan_type: 'hinge'
+  disc_type: 'patch'
+  disc_ndf: 64
+  disc_n_layers: 3
+  disc_norm_type: 'spectral'
+  disc_lr: 5.0e-5
+  disc_start_epoch: 0
+  disc_update_freq: 2
 
 optimizer:
   type: "AdamW"
-  lr: 5.0e-5  # 初始化器可以使用稍高的学习率
+  lr: 5.0e-5
   beta1: 0.9
   beta2: 0.999
   weight_decay: 1.0e-6
@@ -79,6 +79,7 @@ scheduler:
   gamma: 0.5
 
 hardware:
-  gpu_ids: [0]  # 使用的GPU ID
-  distributed: false  # 是否使用分布式训练
-  find_unused_parameters: false  # DDP设置
+  gpu_ids: [0]
+  distributed: false
+  find_unused_parameters: false
+

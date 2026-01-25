@@ -1,24 +1,18 @@
-# 噪声预测器推理配置文件
-# 用于加载训练好的噪声预测器进行超分辨率推理
-
-# 模型路径配置
 model:
-  noise_predictor_path: "LPNSR/pretrained/noise_predictor.pth"  # 训练好的噪声预测器权重
-  resshift_path: "LPNSR/pretrained/resshift_realsrx4_s4_v3.pth"  # ResShift预训练权重
-  vae_path: "LPNSR/pretrained/autoencoder_vq_f4.pth"  # VAE权重
-  initializer_path: "LPNSR/pretrained/initializer.pth"  # 训练好的初始化器权重
+  noise_predictor_path: "LPNSR/pretrained/noise_predictor.pth"
+  resshift_path: "LPNSR/pretrained/resshift_realsrx4_s4_v3.pth"
+  vae_path: "LPNSR/pretrained/autoencoder_vq_f4.pth"
+  initializer_path: "LPNSR/pretrained/initializer.pth"
 
-# VAE配置（与训练时保持一致）
 vae:
   lora:
-    rank: 8  # LoRA的秩
-    alpha: 1.0  # LoRA的缩放因子
-    tune_decoder: false  # 是否对解码器应用LoRA微调
+    rank: 8
+    alpha: 1.0
+    tune_decoder: false
 
-# ResShift UNet配置（与训练时保持一致）
 resshift_unet:
-  image_size: 64  # 潜在空间尺寸
-  in_channels: 3  # VAE潜在空间通道数
+  image_size: 64
+  in_channels: 3
   model_channels: 160
   out_channels: 3
   attention_resolutions: [64, 32, 16, 8]
@@ -39,51 +33,41 @@ resshift_unet:
   dims: 2
   patch_norm: false
 
-# 噪声预测器配置（与训练时保持一致）
 noise_predictor:
-  config_path: "LPNSR/configs/noise_predictor_config.yaml"  # 使用更新后的配置文件
+  config_path: "LPNSR/configs/noise_predictor_config.yaml"
 
-# 初始化器配置（与训练时保持一致）
 initializer:
-  config_path: "LPNSR/configs/initializer_config.yaml"  # 初始化器配置文件
+  config_path: "LPNSR/configs/initializer_config.yaml"
 
-# 扩散过程配置（ResShift v3参数）
 diffusion:
-  num_timesteps: 4  # ResShift v3使用4步（注意：这里直接设置为采样步数）
-  kappa: 2.0  # ResShift v3的κ参数
-  eta_schedule: "exponential"  # eta调度类型
-  eta_power: 0.3  # 指数调度的幂次（ResShift v3使用0.3）
-  min_noise_level: 0.2  # 最小噪声水平（ResShift v3使用0.2）
-  etas_end: 0.99  # 最大噪声水平
-  normalize_input: true  # 输入归一化（重要！）
-  latent_flag: true  # 潜在空间标志
-  scale_factor: 1.0  # 缩放因子
-  
-# 推理配置
+  num_timesteps: 4
+  kappa: 2.0
+  eta_schedule: "exponential"
+  eta_power: 0.3
+  min_noise_level: 0.2
+  etas_end: 0.99
+  normalize_input: true
+  latent_flag: true
+  scale_factor: 1.0
+
 inference:
-  num_steps: 4  # 采样步数（与ResShift v3一致）
-  scale_factor: 4  # 超分倍数
+  num_steps: 4
+  scale_factor: 4
 
-  # 噪声生成方式
-  use_noise_predictor: true  # true: 使用噪声预测器生成中间噪声, false: 使用随机噪声(原始ResShift)
-  use_initializer: true  # true: 使用初始化器生成初始噪声, false: 使用随机噪声
+  use_noise_predictor: true
+  use_initializer: true
 
-  #颜色校正
   color_correction: true
 
-  # Padding配置
-  padding_offset: 64  # Padding到64的倍数（与ResShift保持一致）
-  
-  # Chop分块配置（处理大图像）
-  chop_size: 256  # 分块大小
-  chop_stride: 128  # 分块步长
-  chop_bs: 1  # 每次处理的分块数
-  
-  # 设备配置
+  padding_offset: 64
+
+  chop_size: 256
+  chop_stride: 128
+  chop_bs: 1
+
   device: "cuda"
-  use_amp: true  # 使用混合精度加速
-  seed: 12345  # 随机种子
-  
-  # 输出配置
-  save_format: "png"  # 输出格式
-  rgb2bgr: true  # 是否转换为BGR（OpenCV格式）
+  use_amp: true
+  seed: 12345
+
+  save_format: "png"
+  rgb2bgr: true

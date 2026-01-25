@@ -1,89 +1,65 @@
-# RealESRGAN 图像退化管道配置文件
-# 用于配置图像超分辨率的退化过程参数
-
-# 数据处理选项
 opts:
-  # 数据路径配置
-  dir_paths: []  # 图像目录路径列表
-  txt_file_path: []  # 包含图像路径的文本文件列表
-  im_exts: ['png', 'jpg', 'JPEG']  # 支持的图像扩展名
-  
-  # IO后端配置
-  io_backend:
-    type: disk  # 可选: disk, lmdb
-  
-  # 第一次模糊核设置
-  blur_kernel_size: 13  # 模糊核大小
-  kernel_list: ['iso', 'aniso', 'generalized_iso', 'generalized_aniso', 'plateau_iso', 'plateau_aniso']
-  kernel_prob: [0.60, 0.40, 0.0, 0.0, 0.0, 0.0]  # 各类型核的概率，总和应为1
-  sinc_prob: 0.1  # sinc滤波器的概率
-  blur_sigma: [0.2, 2.0]  # 高斯模糊的sigma范围（增强：0.8→2.0）
-  betag_range: [1.0, 1.5]  # 广义高斯模糊的beta_g参数范围
-  betap_range: [1, 1.2]  # 平台模糊的beta_p参数范围
+  dir_paths: []
+  txt_file_path: []
+  im_exts: ['png', 'jpg', 'JPEG']
 
-  # 第二次模糊核设置
-  blur_kernel_size2: 7  # 第二次模糊核大小
+  io_backend:
+    type: disk
+
+  blur_kernel_size: 13
+  kernel_list: ['iso', 'aniso', 'generalized_iso', 'generalized_aniso', 'plateau_iso', 'plateau_aniso']
+  kernel_prob: [0.60, 0.40, 0.0, 0.0, 0.0, 0.0]
+  sinc_prob: 0.1
+  blur_sigma: [0.2, 2.0]
+  betag_range: [1.0, 1.5]
+  betap_range: [1, 1.2]
+
+  blur_kernel_size2: 7
   kernel_list2: ['iso', 'aniso', 'generalized_iso', 'generalized_aniso', 'plateau_iso', 'plateau_aniso']
   kernel_prob2: [0.60, 0.40, 0.0, 0.0, 0.0, 0.0]
   sinc_prob2: 0.1
-  blur_sigma2: [0.2, 1.0]  # 增强：0.5→1.0
+  blur_sigma2: [0.2, 1.0]
   betag_range2: [1.0, 1.5]
   betap_range2: [1, 1.2]
 
-  # 最终sinc滤波器概率
   final_sinc_prob: 0.8
 
-  # 图像处理参数
-  gt_size: 256  # ground truth图像大小
-  crop_pad_size: 300  # 裁剪填充大小
-  use_hflip: False  # 是否使用水平翻转（与ResShift保持一致）
-  use_rot: False  # 是否使用旋转（与ResShift保持一致）
-  rescale_gt: True  # 是否重新缩放ground truth
+  gt_size: 256
+  crop_pad_size: 300
+  use_hflip: False
+  use_rot: False
+  rescale_gt: True
 
-# 退化过程配置
 degradation:
-  sf: 4  # 缩放因子 (scale factor)
+  sf: 4
 
-  # ==================== 第一次退化过程 ====================
-  # 调整大小概率和范围
-  resize_prob: [0.2, 0.7, 0.1]  # [上采样, 下采样, 保持] 的概率
-  resize_range: [0.15, 1.5]  # 调整大小的范围
+  resize_prob: [0.2, 0.7, 0.1]
+  resize_range: [0.15, 1.5]
 
-  # 高斯噪声设置
-  gaussian_noise_prob: 0.5  # 添加高斯噪声的概率
-  noise_range: [1, 25]  # 噪声强度范围 (sigma)（增强：15→25）
+  gaussian_noise_prob: 0.5
+  noise_range: [1, 25]
 
-  # 泊松噪声设置
-  poisson_scale_range: [0.05, 0.5]  # 泊松噪声的缩放范围（增强：0.3→0.5）
+  poisson_scale_range: [0.05, 0.5]
 
-  # 灰度噪声概率
-  gray_noise_prob: 0.4  # 添加灰度噪声的概率
+  gray_noise_prob: 0.4
 
-  # JPEG压缩设置
-  jpeg_range: [50, 95]  # JPEG质量范围 (越低压缩越严重)（增强：70→50）
+  jpeg_range: [50, 95]
 
-  # ==================== 第二次退化过程 ====================
-  second_order_prob: 0.5  # 执行第二次退化的概率（关键！启用二阶退化：0.0→0.5）
-  second_blur_prob: 0.8  # 第二次退化中应用模糊的概率
+  second_order_prob: 0.5
+  second_blur_prob: 0.8
 
-  # 第二次调整大小
-  resize_prob2: [0.3, 0.4, 0.3]  # [上采样, 下采样, 保持]
+  resize_prob2: [0.3, 0.4, 0.3]
   resize_range2: [0.3, 1.2]
 
-  # 第二次高斯噪声
   gaussian_noise_prob2: 0.5
-  noise_range2: [1, 20]  # 增强：15→20
+  noise_range2: [1, 20]
 
-  # 第二次泊松噪声
-  poisson_scale_range2: [0.05, 0.4]  # 增强：0.3→0.4
+  poisson_scale_range2: [0.05, 0.4]
 
-  # 第二次灰度噪声
   gray_noise_prob2: 0.4
 
-  # 第二次JPEG压缩
-  jpeg_range2: [50, 95]  # 增强：70→50
+  jpeg_range2: [50, 95]
 
-  # ==================== 其他设置 ====================
-  gt_size: 256  # ground truth大小
-  resize_back: False  # 是否调整回原始大小（与ResShift保持一致）
-  use_sharp: False  # 是否使用锐化（与ResShift保持一致）
+  gt_size: 256
+  resize_back: False
+  use_sharp: False
