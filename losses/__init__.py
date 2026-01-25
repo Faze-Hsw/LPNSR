@@ -1,10 +1,10 @@
 """
-超分辨率训练损失函数模块
+Super-resolution training loss functions module
 
-包含以下损失函数：
-1. L2Loss: 标准的L2损失（MSE）
-2. GANLoss: GAN对抗损失
-3. LPIPSLoss: LPIPS感知损失（CVPR 2018）
+Includes the following loss functions:
+1. L2Loss: Standard L2 loss (MSE)
+2. GANLoss: GAN adversarial loss
+3. LPIPSLoss: LPIPS perceptual loss (CVPR 2018)
 """
 
 from .basic_loss import L2Loss

@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-GAN损失函数
+GAN Loss Functions
 
-包含：
-1. PatchGAN判别器（用于图像空间的对抗训练）
-2. GAN损失计算（支持多种GAN类型）
+Includes:
+1. PatchGAN discriminator (for adversarial training in image space)
+2. GAN loss calculation (supports multiple GAN types)
 """
 
 import torch
@@ -16,12 +16,12 @@ from torch.nn.utils import spectral_norm
 
 class NLayerDiscriminator(nn.Module):
     """
-    PatchGAN判别器
+    PatchGAN Discriminator
 
-    将图像分成多个patch，每个patch独立判断真假
-    输出是一个特征图，每个位置代表对应patch的真假判断
+    Divides image into multiple patches, each patch independently determines real/fake
+    Output is a feature map, each position represents real/fake judgment for corresponding patch
 
-    参考: pix2pix, pix2pixHD
+    Reference: pix2pix, pix2pixHD
     """
 
     def __init__(
@@ -34,17 +34,17 @@ class NLayerDiscriminator(nn.Module):
     ):
         """
         Args:
-            input_nc: 输入通道数
-            ndf: 第一层卷积的通道数
-            n_layers: 判别器层数
-            norm_type: 归一化类型 ('batch', 'instance', 'spectral', 'none')
-            use_sigmoid: 是否在输出使用sigmoid（vanilla GAN需要，LSGAN/WGAN不需要）
+            input_nc: Number of input channels
+            ndf: Number of channels in first convolution
+            n_layers: Number of discriminator layers
+            norm_type: Normalization type ('batch', 'instance', 'spectral', 'none')
+            use_sigmoid: Whether to use sigmoid at output (needed for vanilla GAN, not for LSGAN/WGAN)
         """
         super().__init__()
 
         self.use_sigmoid = use_sigmoid
 
-        # 选择归一化层
+        # Choose normalization layer
         if norm_type == 'batch':
             norm_layer = nn.BatchNorm2d
             use_spectral = False
@@ -58,10 +58,10 @@ class NLayerDiscriminator(nn.Module):
             norm_layer = None
             use_spectral = False
 
-        kw = 4  # 卷积核大小
-        padw = 1  # padding大小
+        kw = 4  # Kernel size
+        padw = 1  # Padding size
 
-        # 第一层：不使用归一化
+        # First layer: no normalization
         sequence = []
         if use_spectral:
             sequence.append(spectral_norm(nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)))
@@ -69,7 +69,7 @@ class NLayerDiscriminator(nn.Module):
             sequence.append(nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw))
         sequence.append(nn.LeakyReLU(0.2, True))
 
-        # 中间层
+        # Middle layers
         nf_mult = 1
         nf_mult_prev = 1
         for n in range(1, n_layers):
@@ -88,7 +88,7 @@ class NLayerDiscriminator(nn.Module):
 
             sequence.append(nn.LeakyReLU(0.2, True))
 
-        # 倒数第二层
+        # Second to last layer
         nf_mult_prev = nf_mult
         nf_mult = min(2 ** n_layers, 8)
 
@@ -104,7 +104,7 @@ class NLayerDiscriminator(nn.Module):
 
         sequence.append(nn.LeakyReLU(0.2, True))
 
-        # 最后一层：输出1通道
+        # Last layer: output 1 channel
         if use_spectral:
             sequence.append(spectral_norm(
                 nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)
@@ -117,10 +117,10 @@ class NLayerDiscriminator(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: 输入图像 [B, C, H, W]
+            x: Input image [B, C, H, W]
 
         Returns:
-            判别结果 [B, 1, H', W']
+            Discrimination result [B, 1, H', W']
         """
         out = self.model(x)
         if self.use_sigmoid:
@@ -130,10 +130,10 @@ class NLayerDiscriminator(nn.Module):
 
 class UNetDiscriminator(nn.Module):
     """
-    UNet结构的判别器
+    UNet-style Discriminator
 
-    结合了全局和局部判断能力，适合高分辨率图像
-    参考: Real-ESRGAN
+    Combines global and local judgment capabilities, suitable for high-resolution images
+    Reference: Real-ESRGAN
     """
 
     def __init__(
@@ -144,27 +144,27 @@ class UNetDiscriminator(nn.Module):
     ):
         """
         Args:
-            input_nc: 输入通道数
-            ndf: 基础通道数
-            skip_connection: 是否使用跳跃连接
+            input_nc: Number of input channels
+            ndf: Base number of channels
+            skip_connection: Whether to use skip connections
         """
         super().__init__()
 
         self.skip_connection = skip_connection
 
-        # 编码器
+        # Encoder
         self.conv0 = nn.Conv2d(input_nc, ndf, kernel_size=3, stride=1, padding=1)
 
         self.conv1 = spectral_norm(nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1, bias=False))
         self.conv2 = spectral_norm(nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1, bias=False))
         self.conv3 = spectral_norm(nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1, bias=False))
 
-        # 解码器
+        # Decoder
         self.conv4 = spectral_norm(nn.Conv2d(ndf * 8, ndf * 4, kernel_size=3, stride=1, padding=1, bias=False))
         self.conv5 = spectral_norm(nn.Conv2d(ndf * 4, ndf * 2, kernel_size=3, stride=1, padding=1, bias=False))
         self.conv6 = spectral_norm(nn.Conv2d(ndf * 2, ndf, kernel_size=3, stride=1, padding=1, bias=False))
 
-        # 最终输出
+        # Final output
         self.conv7 = spectral_norm(nn.Conv2d(ndf, ndf, kernel_size=3, stride=1, padding=1, bias=False))
         self.conv8 = spectral_norm(nn.Conv2d(ndf, ndf, kernel_size=3, stride=1, padding=1, bias=False))
         self.conv9 = nn.Conv2d(ndf, 1, kernel_size=3, stride=1, padding=1)
@@ -174,18 +174,18 @@ class UNetDiscriminator(nn.Module):
     def forward(self, x):
         """
         Args:
-            x: 输入图像 [B, C, H, W]
+            x: Input image [B, C, H, W]
 
         Returns:
-            判别结果 [B, 1, H, W]
+            Discrimination result [B, 1, H, W]
         """
-        # 编码
+        # Encoding
         feat0 = self.lrelu(self.conv0(x))
         feat1 = self.lrelu(self.conv1(feat0))
         feat2 = self.lrelu(self.conv2(feat1))
         feat3 = self.lrelu(self.conv3(feat2))
 
-        # 解码 + 上采样
+        # Decoding + upsampling
         feat3 = F.interpolate(feat3, scale_factor=2, mode='bilinear', align_corners=False)
         feat4 = self.lrelu(self.conv4(feat3))
         if self.skip_connection:
@@ -201,7 +201,7 @@ class UNetDiscriminator(nn.Module):
         if self.skip_connection:
             feat6 = feat6 + feat0
 
-        # 最终输出
+        # Final output
         out = self.lrelu(self.conv7(feat6))
         out = self.lrelu(self.conv8(out))
         out = self.conv9(out)
@@ -211,14 +211,14 @@ class UNetDiscriminator(nn.Module):
 
 class GANLoss(nn.Module):
     """
-    GAN损失计算
+    GAN Loss Calculation
 
-    支持多种GAN类型：
-    - vanilla: 原始GAN (BCE loss)
-    - lsgan: 最小二乘GAN (MSE loss)
+    Supports multiple GAN types:
+    - vanilla: Original GAN (BCE loss)
+    - lsgan: Least Squares GAN (MSE loss)
     - wgan: Wasserstein GAN
     - wgan-gp: WGAN with gradient penalty
-    - hinge: Hinge loss (常用于BigGAN, StyleGAN)
+    - hinge: Hinge loss (commonly used in BigGAN, StyleGAN)
     """
 
     def __init__(
@@ -230,10 +230,10 @@ class GANLoss(nn.Module):
     ):
         """
         Args:
-            gan_type: GAN类型 ('vanilla', 'lsgan', 'wgan', 'wgan-gp', 'hinge')
-            real_label: 真实标签值
-            fake_label: 假标签值
-            loss_weight: 损失权重
+            gan_type: GAN type ('vanilla', 'lsgan', 'wgan', 'wgan-gp', 'hinge')
+            real_label: Real label value
+            fake_label: Fake label value
+            loss_weight: Loss weight
         """
         super().__init__()
 
@@ -249,10 +249,10 @@ class GANLoss(nn.Module):
         elif gan_type in ['wgan', 'wgan-gp', 'hinge']:
             self.loss = None
         else:
-            raise ValueError(f"不支持的GAN类型: {gan_type}")
+            raise ValueError(f"Unsupported GAN type: {gan_type}")
 
     def _get_target_label(self, pred, target_is_real):
-        """获取目标标签"""
+        """Get target label"""
         if target_is_real:
             target_label = self.real_label
         else:
@@ -261,15 +261,15 @@ class GANLoss(nn.Module):
 
     def forward(self, pred, target_is_real, is_disc=False):
         """
-        计算GAN损失
+        Calculate GAN loss
 
         Args:
-            pred: 判别器输出
-            target_is_real: 目标是否为真实图像
-            is_disc: 是否是判别器的损失（用于hinge loss）
+            pred: Discriminator output
+            target_is_real: Whether target is real image
+            is_disc: Whether it's discriminator loss (for hinge loss)
 
         Returns:
-            GAN损失值
+            GAN loss value
         """
         if self.gan_type == 'vanilla' or self.gan_type == 'lsgan':
             target_label = self._get_target_label(pred, target_is_real)
@@ -294,39 +294,39 @@ class GANLoss(nn.Module):
                 else:
                     loss = F.relu(1.0 + pred).mean()
             else:
-                # 生成器损失
+                # Generator loss
                 loss = -pred.mean()
         else:
-            raise ValueError(f"不支持的GAN类型: {self.gan_type}")
+            raise ValueError(f"Unsupported GAN type: {self.gan_type}")
 
         return self.loss_weight * loss
 
     def compute_gradient_penalty(self, discriminator, real_samples, fake_samples):
         """
-        计算WGAN-GP的梯度惩罚
+        Calculate gradient penalty for WGAN-GP
 
         Args:
-            discriminator: 判别器
-            real_samples: 真实样本
-            fake_samples: 生成样本
+            discriminator: Discriminator
+            real_samples: Real samples
+            fake_samples: Generated samples
 
         Returns:
-            梯度惩罚值
+            Gradient penalty value
         """
         batch_size = real_samples.size(0)
         device = real_samples.device
 
-        # 随机插值系数
+        # Random interpolation coefficient
         alpha = torch.rand(batch_size, 1, 1, 1, device=device)
 
-        # 插值样本
+        # Interpolated samples
         interpolates = alpha * real_samples + (1 - alpha) * fake_samples
         interpolates.requires_grad_(True)
 
-        # 判别器输出
+        # Discriminator output
         d_interpolates = discriminator(interpolates)
 
-        # 计算梯度
+        # Calculate gradient
         gradients = torch.autograd.grad(
             outputs=d_interpolates,
             inputs=interpolates,
@@ -336,7 +336,7 @@ class GANLoss(nn.Module):
             only_inputs=True
         )[0]
 
-        # 计算梯度惩罚
+        # Calculate gradient penalty
         gradients = gradients.view(batch_size, -1)
         gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
 
@@ -351,17 +351,17 @@ def create_discriminator(
         norm_type='spectral'
 ):
     """
-    创建判别器
+    Create discriminator
 
     Args:
-        disc_type: 判别器类型 ('patch', 'unet')
-        input_nc: 输入通道数
-        ndf: 基础通道数
-        n_layers: 层数（仅PatchGAN）
-        norm_type: 归一化类型
+        disc_type: Discriminator type ('patch', 'unet')
+        input_nc: Number of input channels
+        ndf: Base number of channels
+        n_layers: Number of layers (PatchGAN only)
+        norm_type: Normalization type
 
     Returns:
-        判别器实例
+        Discriminator instance
     """
     if disc_type == 'patch':
         return NLayerDiscriminator(
@@ -378,45 +378,45 @@ def create_discriminator(
             skip_connection=True
         )
     else:
-        raise ValueError(f"不支持的判别器类型: {disc_type}")
+        raise ValueError(f"Unsupported discriminator type: {disc_type}")
 
 
 if __name__ == '__main__':
-    # 测试代码
+    # Test code
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # 测试PatchGAN判别器
-    print("测试PatchGAN判别器...")
+    # Test PatchGAN discriminator
+    print("Testing PatchGAN discriminator...")
     disc_patch = create_discriminator('patch', input_nc=3, ndf=64, n_layers=3).to(device)
     x = torch.randn(2, 3, 256, 256).to(device)
     out = disc_patch(x)
-    print(f"  输入: {x.shape}")
-    print(f"  输出: {out.shape}")
-    print(f"  参数量: {sum(p.numel() for p in disc_patch.parameters()) / 1e6:.2f}M")
+    print(f"  Input: {x.shape}")
+    print(f"  Output: {out.shape}")
+    print(f"  Parameters: {sum(p.numel() for p in disc_patch.parameters()) / 1e6:.2f}M")
 
-    # 测试UNet判别器
-    print("\n测试UNet判别器...")
+    # Test UNet discriminator
+    print("\nTesting UNet discriminator...")
     disc_unet = create_discriminator('unet', input_nc=3, ndf=64).to(device)
     out = disc_unet(x)
-    print(f"  输入: {x.shape}")
-    print(f"  输出: {out.shape}")
-    print(f"  参数量: {sum(p.numel() for p in disc_unet.parameters()) / 1e6:.2f}M")
+    print(f"  Input: {x.shape}")
+    print(f"  Output: {out.shape}")
+    print(f"  Parameters: {sum(p.numel() for p in disc_unet.parameters()) / 1e6:.2f}M")
 
-    # 测试GAN损失
-    print("\n测试GAN损失...")
+    # Test GAN loss
+    print("\nTesting GAN loss...")
     gan_loss = GANLoss(gan_type='lsgan', loss_weight=1.0)
 
     fake_pred = torch.randn(2, 1, 30, 30).to(device)
     real_pred = torch.randn(2, 1, 30, 30).to(device)
 
-    # 判别器损失
+    # Discriminator loss
     d_loss_real = gan_loss(real_pred, target_is_real=True, is_disc=True)
     d_loss_fake = gan_loss(fake_pred, target_is_real=False, is_disc=True)
     d_loss = d_loss_real + d_loss_fake
-    print(f"  判别器损失: {d_loss.item():.4f}")
+    print(f"  Discriminator loss: {d_loss.item():.4f}")
 
-    # 生成器损失
+    # Generator loss
     g_loss = gan_loss(fake_pred, target_is_real=True, is_disc=False)
-    print(f"  生成器损失: {g_loss.item():.4f}")
+    print(f"  Generator loss: {g_loss.item():.4f}")
 
-    print("\n测试完成！")
+    print("\nTest completed!")

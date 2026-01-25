@@ -1,7 +1,7 @@
 """
-基础损失函数
+Basic Loss Functions
 
-包含标准的L2损失（MSE Loss）
+Includes standard L2 loss (MSE Loss)
 """
 
 import torch
@@ -12,22 +12,23 @@ from typing import Optional
 
 class L2Loss(nn.Module):
     """
-    L2损失（均方误差损失）
+    L2 Loss (Mean Squared Error Loss)
     
-    这是超分辨率任务中最常用的基础损失函数，用于衡量预测图像和真实图像之间的像素级差异。
+    This is the most commonly used basic loss function for super-resolution tasks, 
+    used to measure pixel-level differences between predicted and real images.
     
-    优点：
-    - 计算简单高效
-    - 优化稳定
-    - 能够保证基本的重建质量
+    Advantages:
+    - Simple and efficient to compute
+    - Stable optimization
+    - Ensures basic reconstruction quality
     
-    缺点：
-    - 倾向于产生过度平滑的结果
-    - 对高频细节的恢复能力有限
+    Disadvantages:
+    - Tends to produce overly smooth results
+    - Limited ability to recover high-frequency details
     
     Args:
-        reduction: 损失的归约方式，可选 'mean', 'sum', 'none'
-        loss_weight: 损失权重，用于多损失加权
+        reduction: Loss reduction method, optional 'mean', 'sum', 'none'
+        loss_weight: Loss weight for multi-loss weighting
     
     Examples:
         >>> criterion = L2Loss(reduction='mean', loss_weight=1.0)
@@ -56,29 +57,29 @@ class L2Loss(nn.Module):
         weight: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        计算L2损失
+        Calculate L2 loss
         
         Args:
-            pred: 预测图像 [B, C, H, W]
-            target: 目标图像 [B, C, H, W]
-            weight: 可选的像素权重 [B, 1, H, W] 或 [B, C, H, W]
+            pred: Predicted image [B, C, H, W]
+            target: Target image [B, C, H, W]
+            weight: Optional pixel weight [B, 1, H, W] or [B, C, H, W]
         
         Returns:
-            loss: L2损失值
+            loss: L2 loss value
         """
-        # 计算平方误差
+        # Calculate squared error
         loss = F.mse_loss(pred, target, reduction='none')
         
-        # 应用权重（如果提供）
+        # Apply weight (if provided)
         if weight is not None:
             loss = loss * weight
         
-        # 归约
+        # Reduction
         if self.reduction == 'mean':
             loss = loss.mean()
         elif self.reduction == 'sum':
             loss = loss.sum()
-        # 'none'时不进行归约
+        # No reduction for 'none' mode
         
         return self.loss_weight * loss
     
@@ -88,17 +89,18 @@ class L2Loss(nn.Module):
 
 class CharbonnierLoss(nn.Module):
     """
-    Charbonnier损失（L1损失的平滑版本）
+    Charbonnier Loss (smooth version of L1 loss)
     
-    Charbonnier损失是L1损失的可微分近似，在超分辨率任务中也很常用。
-    相比MSE损失，它对异常值更加鲁棒。
+    Charbonnier loss is a differentiable approximation of L1 loss, 
+    also commonly used in super-resolution tasks. 
+    Compared to MSE loss, it is more robust to outliers.
     
-    公式: loss = sqrt((pred - target)^2 + eps^2)
+    Formula: loss = sqrt((pred - target)^2 + eps^2)
     
     Args:
-        eps: 平滑参数，避免梯度为0
-        reduction: 损失的归约方式
-        loss_weight: 损失权重
+        eps: Smoothing parameter to avoid zero gradient
+        reduction: Loss reduction method
+        loss_weight: Loss weight
     
     Examples:
         >>> criterion = CharbonnierLoss(eps=1e-3)
@@ -125,15 +127,15 @@ class CharbonnierLoss(nn.Module):
         weight: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
-        计算Charbonnier损失
+        Calculate Charbonnier loss
         
         Args:
-            pred: 预测图像 [B, C, H, W]
-            target: 目标图像 [B, C, H, W]
-            weight: 可选的像素权重
+            pred: Predicted image [B, C, H, W]
+            target: Target image [B, C, H, W]
+            weight: Optional pixel weight
         
         Returns:
-            loss: Charbonnier损失值
+            loss: Charbonnier loss value
         """
         diff = pred - target
         loss = torch.sqrt(diff * diff + self.eps * self.eps)
