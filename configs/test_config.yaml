@@ -9,7 +9,7 @@ data:
 
 # 推理配置（指向推理配置文件）
 inference:
-  config_path: "LPNSR/configs/inference_noise_predictor.yaml"
+  config_path: "LPNSR/configs/inference.yaml"
 
 # 评估指标配置
 metrics:

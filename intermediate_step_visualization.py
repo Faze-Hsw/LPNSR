@@ -737,7 +737,7 @@ def get_parser():
     parser.add_argument(
         "-c", "--config",
         type=str,
-        default="LPNSR/configs/inference_noise_predictor.yaml",
+        default="LPNSR/configs/inference.yaml",
         help="配置文件路径"
     )
     parser.add_argument(
