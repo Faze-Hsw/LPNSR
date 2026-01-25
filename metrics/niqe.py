@@ -1,8 +1,8 @@
 """
-NIQE (Natural Image Quality Evaluator) 自然图像质量评估器
+NIQE (Natural Image Quality Evaluator) Natural Image Quality Evaluator
 
-无参考图像质量评估指标，基于自然场景统计特性。
-NIQE值越低表示图像质量越好。
+No-reference image quality assessment metric, based on natural scene statistical properties.
+Lower NIQE values indicate better image quality.
 """
 
 import numpy as np
@@ -20,18 +20,18 @@ def calculate_niqe(
     **kwargs
 ) -> float:
     """
-    计算图像的NIQE分数
+    Calculate NIQE score of image
     
     Args:
-        img: 输入图像
-        crop_border: 裁剪边界像素数
-        input_order: 输入图像的维度顺序
-        convert_to_gray: 是否转换为灰度图
+        img: Input image
+        crop_border: Number of border pixels to crop
+        input_order: Dimension order of input image
+        convert_to_gray: Whether to convert to grayscale
         
     Returns:
-        NIQE分数 (越低越好)
+        NIQE score (lower is better)
     """
-    # 优先使用pyiqa库
+    # Prefer using pyiqa library
     try:
         import pyiqa
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -80,7 +80,7 @@ class NIQE(nn.Module):
             import pyiqa
             self.pyiqa_model = pyiqa.create_metric('niqe', device=self.device)
         except ImportError:
-            warnings.warn("pyiqa包未安装，请安装: pip install pyiqa")
+            warnings.warn("pyiqa package is not installed, please install: pip install pyiqa")
     
     def forward(self, img: Union[np.ndarray, torch.Tensor]) -> float:
         if self.pyiqa_model is not None:

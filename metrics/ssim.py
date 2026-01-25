@@ -1,8 +1,9 @@
 """
-SSIM (Structural Similarity Index) 结构相似性指数
+SSIM (Structural Similarity Index) Structural Similarity Index
 
-全参考图像质量评估指标，综合考虑图像的亮度、对比度和结构信息。
-SSIM值范围为[-1, 1]，值越大表示图像越相似。
+Full-reference image quality assessment metric, comprehensively considering 
+image luminance, contrast, and structural information.
+SSIM value range is [-1, 1], higher values indicate more similar images.
 """
 
 import numpy as np
@@ -22,7 +23,7 @@ def _ssim_single_channel(
     win_size: int = 11,
     data_range: float = 255.0
 ) -> float:
-    """计算单通道图像的SSIM值"""
+    """Calculate SSIM value for single-channel image"""
     c1 = (k1 * data_range) ** 2
     c2 = (k2 * data_range) ** 2
     
@@ -53,19 +54,19 @@ def calculate_ssim(
     win_size: int = 11
 ) -> float:
     """
-    计算两张图像之间的SSIM值
+    Calculate SSIM value between two images
     
     Args:
-        img1: 第一张图像
-        img2: 第二张图像
-        crop_border: 计算前裁剪的边界像素数
-        input_order: 输入图像的维度顺序
-        test_y_channel: 是否只在Y通道上测试
-        data_range: 图像数据范围
-        win_size: 滑动窗口大小
+        img1: First image
+        img2: Second image
+        crop_border: Number of border pixels to crop before calculation
+        input_order: Dimension order of input images
+        test_y_channel: Whether to test only on Y channel
+        data_range: Image data range
+        win_size: Sliding window size
         
     Returns:
-        SSIM值
+        SSIM value
     """
     if torch.is_tensor(img1):
         img1 = img1.detach().cpu().numpy()
@@ -103,7 +104,7 @@ def calculate_ssim(
 
 
 class SSIM(nn.Module):
-    """SSIM计算类"""
+    """SSIM calculation class"""
     
     def __init__(
         self,

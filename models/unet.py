@@ -1,6 +1,6 @@
 """
-UNet-SwinTransformer模型用于ResShift反向过程中预测X0
-基于ResShift项目的UNetModelSwin实现
+UNet-SwinTransformer model for predicting X0 during ResShift reverse process
+Based on UNetModelSwin implementation from ResShift project
 """
 
 from abc import abstractmethod
@@ -23,19 +23,19 @@ from .swin_transformer import BasicLayer
 
 class TimestepBlock(nn.Module):
     """
-    任何forward()接受时间步嵌入作为第二个参数的模块
+    Any module with forward() that accepts timestep embedding as second argument
     """
 
     @abstractmethod
     def forward(self, x, emb):
         """
-        将模块应用于给定时间步嵌入的x
+        Apply module to x with given timestep embedding
         """
 
 
 class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     """
-    一个顺序模块，将时间步嵌入传递给支持它的子模块作为额外输入
+    A sequential module that passes timestep embedding to child modules that support it as extra input
     """
 
     def forward(self, x, emb):
@@ -49,10 +49,10 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
 
 class Upsample(nn.Module):
     """
-    带有可选卷积的上采样层
-    :param channels: 输入和输出的通道数
-    :param use_conv: 是否应用卷积
-    :param dims: 信号是1D、2D还是3D
+    Upsampling layer with optional convolution
+    :param channels: Number of input and output channels
+    :param use_conv: Whether to apply convolution
+    :param dims: Whether the signal is 1D, 2D, or 3D
     """
 
     def __init__(self, channels, use_conv, dims=2, out_channels=None):
@@ -79,10 +79,10 @@ class Upsample(nn.Module):
 
 class Downsample(nn.Module):
     """
-    带有可选卷积的下采样层
-    :param channels: 输入和输出的通道数
-    :param use_conv: 是否应用卷积
-    :param dims: 信号是1D、2D还是3D
+    Downsampling layer with optional convolution
+    :param channels: Number of input and output channels
+    :param use_conv: Whether to apply convolution
+    :param dims: Whether the signal is 1D, 2D, or 3D
     """
     def __init__(self, channels, use_conv, dims=2, out_channels=None):
         super().__init__()
@@ -106,15 +106,15 @@ class Downsample(nn.Module):
 
 class ResBlock(TimestepBlock):
     """
-    可以选择性地改变通道数的残差块
-    :param channels: 输入通道数
-    :param emb_channels: 时间步嵌入通道数
-    :param dropout: dropout率
-    :param out_channels: 如果指定，输出通道数
-    :param use_conv: 如果为True且指定了out_channels，使用空间卷积而不是1x1卷积
-    :param dims: 信号是1D、2D还是3D
-    :param up: 如果为True，使用此块进行上采样
-    :param down: 如果为True，使用此块进行下采样
+    Residual block that can optionally change number of channels
+    :param channels: Input channel count
+    :param emb_channels: Timestep embedding channel count
+    :param dropout: Dropout rate
+    :param out_channels: If specified, output channel count
+    :param use_conv: If True and out_channels is specified, use spatial conv instead of 1x1 conv
+    :param dims: Whether the signal is 1D, 2D, or 3D
+    :param up: If True, use this block for upsampling
+    :param down: If True, use this block for downsampling
     """
     def __init__(
         self,
@@ -203,31 +203,31 @@ class ResBlock(TimestepBlock):
 
 class UNetModelSwin(nn.Module):
     """
-    完整的UNet-SwinTransformer模型，用于ResShift反向过程中预测X0
-    
-    :param image_size: 输入图像大小
-    :param in_channels: 输入张量的通道数
-    :param model_channels: 模型的基础通道数
-    :param out_channels: 输出张量的通道数
-    :param num_res_blocks: 每个下采样的残差块数量
-    :param attention_resolutions: 应用注意力的下采样率集合
-    :param dropout: dropout概率
-    :param channel_mult: 每个UNet级别的通道乘数
-    :param conv_resample: 如果为True，使用学习的卷积进行上采样和下采样
-    :param dims: 信号是1D、2D还是3D
-    :param use_fp16: 是否使用float16精度
-    :param num_heads: 每个注意力层的注意力头数
-    :param num_head_channels: 如果指定，忽略num_heads，使用固定的每个注意力头的通道宽度
-    :param use_scale_shift_norm: 使用类似FiLM的条件机制
-    :param resblock_updown: 使用残差块进行上/下采样
-    :param swin_depth: Swin Transformer的深度
-    :param swin_embed_dim: Swin Transformer的嵌入维度
-    :param window_size: Swin Transformer的窗口大小
-    :param mlp_ratio: MLP隐藏维度与嵌入维度的比率
-    :param patch_norm: Swin Transformer中的patch归一化
-    :param cond_lq: 是否条件化低质量图像
-    :param cond_mask: 是否条件化mask
-    :param lq_size: 低质量图像大小
+    Complete UNet-SwinTransformer model for predicting X0 during ResShift reverse process
+
+    :param image_size: Input image size
+    :param in_channels: Number of input tensor channels
+    :param model_channels: Base channel count of model
+    :param out_channels: Number of output tensor channels
+    :param num_res_blocks: Number of residual blocks per downsampling
+    :param attention_resolutions: Set of downsampling rates to apply attention
+    :param dropout: Dropout probability
+    :param channel_mult: Channel multiplier for each UNet level
+    :param conv_resample: If True, use learned conv for upsampling and downsampling
+    :param dims: Whether the signal is 1D, 2D, or 3D
+    :param use_fp16: Whether to use float16 precision
+    :param num_heads: Number of attention heads per attention layer
+    :param num_head_channels: If specified, ignore num_heads, use fixed channel width per attention head
+    :param use_scale_shift_norm: Use FiLM-like conditioning mechanism
+    :param resblock_updown: Use residual blocks for up/downsampling
+    :param swin_depth: Depth of Swin Transformer
+    :param swin_embed_dim: Embedding dimension of Swin Transformer
+    :param window_size: Window size of Swin Transformer
+    :param mlp_ratio: Ratio of MLP hidden dimension to embedding dimension
+    :param patch_norm: Patch normalization in Swin Transformer
+    :param cond_lq: Whether to condition on low-quality image
+    :param cond_mask: Whether to condition on mask
+    :param lq_size: Low-quality image size
     """
 
     def __init__(
@@ -287,7 +287,7 @@ class UNetModelSwin(nn.Module):
             linear(time_embed_dim, time_embed_dim),
         )
 
-        # 特征提取器用于处理低质量图像
+        # Feature extractor for processing low-quality image
         if cond_lq and lq_size == image_size:
             self.feature_extractor = nn.Identity()
             base_chn = 4 if cond_mask else 3
@@ -311,7 +311,7 @@ class UNetModelSwin(nn.Module):
         input_block_chans = [ch]
         ds = image_size
         
-        # 构建输入块（编码器）
+        # Build input blocks (encoder)
         for level, mult in enumerate(channel_mult):
             for jj in range(num_res_blocks[level]):
                 layers = [
@@ -325,7 +325,7 @@ class UNetModelSwin(nn.Module):
                     )
                 ]
                 ch = int(mult * model_channels)
-                # 在每个级别的第一个块添加Swin Transformer
+                # Add Swin Transformer to first block of each level
                 if ds in attention_resolutions and jj==0:
                     layers.append(
                         BasicLayer(
@@ -372,7 +372,7 @@ class UNetModelSwin(nn.Module):
                 input_block_chans.append(ch)
                 ds //= 2
 
-        # 中间块
+        # Middle block
         self.middle_block = TimestepEmbedSequential(
             ResBlock(
                 ch,
@@ -408,7 +408,7 @@ class UNetModelSwin(nn.Module):
             ),
         )
 
-        # 构建输出块（解码器）
+        # Build output blocks (decoder)
         self.output_blocks = nn.ModuleList([])
         for level, mult in list(enumerate(channel_mult))[::-1]:
             for i in range(num_res_blocks[level] + 1):
@@ -424,7 +424,7 @@ class UNetModelSwin(nn.Module):
                     )
                 ]
                 ch = int(model_channels * mult)
-                # 在每个级别的第一个块添加Swin Transformer
+                # Add Swin Transformer to first block of each level
                 if ds in attention_resolutions and i==0:
                     layers.append(
                         BasicLayer(
@@ -464,7 +464,7 @@ class UNetModelSwin(nn.Module):
                     ds *= 2
                 self.output_blocks.append(TimestepEmbedSequential(*layers))
 
-        # 输出层
+        # Output layer
         self.out = nn.Sequential(
             normalization(ch),
             nn.SiLU(),
@@ -473,17 +473,17 @@ class UNetModelSwin(nn.Module):
 
     def forward(self, x, timesteps, lq=None, mask=None):
         """
-        将模型应用于输入批次
-        :param x: [N x C x ...] 输入张量
-        :param timesteps: 1-D时间步批次
-        :param lq: [N x C x ...] 低质量图像张量
-        :param mask: [N x 1 x ...] mask张量
-        :return: [N x C x ...] 输出张量
+        Apply model to input batch
+        :param x: [N x C x ...] Input tensor
+        :param timesteps: 1-D timestep batch
+        :param lq: [N x C x ...] Low-quality image tensor
+        :param mask: [N x 1 x ...] Mask tensor
+        :return: [N x C x ...] Output tensor
         """
         hs = []
         emb = self.time_embed(timestep_embedding(timesteps, self.model_channels)).type(self.dtype)
 
-        # 处理低质量图像条件
+        # Process low-quality image conditioning
         if lq is not None:
             assert self.cond_lq
             if mask is not None:
@@ -492,7 +492,7 @@ class UNetModelSwin(nn.Module):
             lq = self.feature_extractor(lq.type(self.dtype))
             x = th.cat([x, lq], dim=1)
 
-        # 前向传播
+        # Forward pass
         h = x.type(self.dtype)
         for ii, module in enumerate(self.input_blocks):
             h = module(h, emb)
@@ -507,7 +507,7 @@ class UNetModelSwin(nn.Module):
 
     def convert_to_fp16(self):
         """
-        将模型的主体转换为float16
+        Convert main body of model to float16
         """
         self.input_blocks.apply(convert_module_to_f16)
         self.feature_extractor.apply(convert_module_to_f16)
@@ -516,7 +516,7 @@ class UNetModelSwin(nn.Module):
 
     def convert_to_fp32(self):
         """
-        将模型的主体转换为float32
+        Convert main body of model to float32
         """
         self.input_blocks.apply(convert_module_to_f32)
         self.middle_block.apply(convert_module_to_f32)

@@ -1,9 +1,9 @@
 """
-PI (Perceptual Index) 感知指数
+PI (Perceptual Index) Perceptual Index
 
-无参考图像质量评估指标，由PIRM挑战赛提出。
+No-reference image quality assessment metric, proposed by PIRM challenge.
 PI = 0.5 * ((10 - Ma) + NIQE)
-PI值越低表示感知质量越好。
+Lower PI values indicate better perceptual quality.
 """
 
 import numpy as np
@@ -21,16 +21,16 @@ def calculate_pi(
     **kwargs
 ) -> float:
     """
-    计算图像的感知指数 (PI)
+    Calculate perceptual index (PI) of image
     
     Args:
-        img: 输入图像
-        crop_border: 裁剪边界像素数
-        input_order: 输入图像的维度顺序
-        convert_to_gray: 是否转换为灰度图
+        img: Input image
+        crop_border: Number of border pixels to crop
+        input_order: Dimension order of input image
+        convert_to_gray: Whether to convert to grayscale
         
     Returns:
-        PI分数 (越低越好)
+        PI score (lower is better)
     """
     try:
         import pyiqa
@@ -83,7 +83,7 @@ class PI(nn.Module):
             import pyiqa
             self.pyiqa_model = pyiqa.create_metric('pi', device=self.device)
         except ImportError:
-            warnings.warn("pyiqa包未安装，请安装: pip install pyiqa")
+            warnings.warn("pyiqa package is not installed, please install: pip install pyiqa")
         except Exception:
             pass
     

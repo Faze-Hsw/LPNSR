@@ -1,7 +1,7 @@
 """
-基于EDSR-Unet架构的噪声预测器
-输入为中间状态、初始LR和当前时间步，完全重构网络架构
-保留原有的输出分布预测和核心功能接口
+Noise predictor based on EDSR-Unet architecture
+Input is intermediate state, initial LR and current timestep, fully reconstructed network architecture
+Preserves the original output distribution prediction and core function interfaces
 """
 
 import torch
@@ -18,7 +18,7 @@ from LPNSR.ldm.modules.diffusionmodules.openaimodel import (
     zero_module,
 )
 
-# 尝试导入xformers
+# Try importing xformers
 try:
     import xformers
     import xformers.ops
@@ -81,12 +81,12 @@ class DiagonalGaussianDistribution:
 
 
 class EDSRResidualBlock(nn.Module):
-    """EDSR风格的残差块，包含密集连接特征融合"""
+    """EDSR-style residual block with dense connection feature fusion"""
     def __init__(self, channels: int, growth_rate: int = 32, res_scale: float = 0.1):
         super().__init__()
         self.res_scale = res_scale
 
-        # 密集连接卷积层
+        # Dense connection convolution layers
         self.conv1 = nn.Conv2d(channels, growth_rate, 3, padding=1)
         self.conv2 = nn.Conv2d(channels + growth_rate, growth_rate, 3, padding=1)
         self.conv3 = nn.Conv2d(channels + 2 * growth_rate, growth_rate, 3, padding=1)
@@ -97,38 +97,38 @@ class EDSRResidualBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residual = x
 
-        # 密集连接
+        # Dense connections
         x1 = self.activation(self.conv1(x))
         x2 = self.activation(self.conv2(torch.cat([x, x1], dim=1)))
         x3 = self.activation(self.conv3(torch.cat([x, x1, x2], dim=1)))
         x4 = self.conv4(torch.cat([x, x1, x2, x3], dim=1))
 
-        # 残差缩放
+        # Residual scaling
         return residual + self.res_scale * x4
 
 
 class EDSRTimeModulatedBlock(nn.Module):
-    """带有时间步调制的EDSR残差块"""
+    """EDSR residual block with timestep modulation"""
     def __init__(self, channels: int, emb_channels: int, growth_rate: int = 32, res_scale: float = 0.1):
         super().__init__()
         self.res_block = EDSRResidualBlock(channels, growth_rate, res_scale)
         self.time_mlp = nn.Sequential(
             nn.ReLU(inplace=False),
             linear(emb_channels, channels),
-            nn.Unflatten(1, (-1, 1, 1))  # 调整为空间维度
+            nn.Unflatten(1, (-1, 1, 1))  # Adjust to spatial dimensions
         )
 
     def forward(self, x: torch.Tensor, t_emb: torch.Tensor) -> torch.Tensor:
-        # 时间步调制
+        # Timestep modulation
         t_mod = self.time_mlp(t_emb)
-        x = x + t_mod  # 时间信息注入
+        x = x + t_mod  # Time information injection
 
-        # EDSR残差块
+        # EDSR residual block
         return self.res_block(x)
 
 
 class Downsample(nn.Module):
-    """EDSR风格下采样模块"""
+    """EDSR-style downsampling module"""
     def __init__(self, channels: int):
         super().__init__()
         self.conv = nn.Conv2d(channels, channels * 2, 3, stride=2, padding=1)
@@ -139,22 +139,22 @@ class Downsample(nn.Module):
 
 
 class Upsample(nn.Module):
-    """EDSR风格上采样模块"""
+    """EDSR-style upsampling module"""
     def __init__(self, channels: int):
         super().__init__()
         self.conv = nn.Conv2d(channels, channels // 2, 3, padding=1)
         self.activation = nn.ReLU(inplace=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # 先上采样再卷积
+        # Upsample first then convolve
         x = F.interpolate(x, scale_factor=2, mode='bilinear', align_corners=False)
         return self.activation(self.conv(x))
 
 
 class EDSRUnetNoisePredictor(nn.Module):
     """
-    基于EDSR-Unet架构的噪声预测器
-    输入: 中间状态(z_t)、初始LR(lr_latent)、时间步(timesteps)
+    Noise predictor based on EDSR-Unet architecture
+    Input: intermediate state (z_t), initial LR (lr_latent), timesteps
     """
     def __init__(
         self,
@@ -173,7 +173,7 @@ class EDSRUnetNoisePredictor(nn.Module):
         self.num_levels = len(channel_mult)
         self.double_z = double_z
 
-        # 时间步嵌入
+        # Timestep embedding
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
             linear(model_channels, time_embed_dim),
@@ -181,18 +181,18 @@ class EDSRUnetNoisePredictor(nn.Module):
             linear(time_embed_dim, time_embed_dim)
         )
 
-        # 输入处理: 融合中间状态和初始LR
+        # Input processing: fuse intermediate state and initial LR
         self.z_proj = nn.Conv2d(latent_channels, model_channels, 3, padding=1)
         self.lr_proj = nn.Conv2d(latent_channels, model_channels, 3, padding=1)
         self.input_fusion = nn.Conv2d(model_channels * 2, model_channels, 3, padding=1)
 
-        # 编码器
+        # Encoder
         self.encoder = nn.ModuleList()
         current_channels = model_channels
 
         for level in range(self.num_levels):
             block = nn.ModuleList()
-            # 添加多个残差块
+            # Add multiple residual blocks
             for _ in range(num_res_blocks):
                 block.append(
                     EDSRTimeModulatedBlock(
@@ -203,14 +203,14 @@ class EDSRUnetNoisePredictor(nn.Module):
                     )
                 )
 
-            # 添加下采样（最后一层不下采样）
+            # Add downsampling (last layer does not downsample)
             if level < self.num_levels - 1:
                 block.append(Downsample(current_channels))
-                current_channels *= 2  # 下采样后通道翻倍
+                current_channels *= 2  # Double channels after downsampling
 
             self.encoder.append(block)
 
-        # 瓶颈层
+        # Bottleneck layer
         self.bottleneck = nn.ModuleList([
             EDSRTimeModulatedBlock(
                 current_channels,
@@ -226,10 +226,10 @@ class EDSRUnetNoisePredictor(nn.Module):
             )
         ])
 
-        # 解码器
+        # Decoder
         self.decoder = nn.ModuleList()
         
-        # 存储每个解码器层的输入通道数（用于跳跃连接）
+        # Store input channel count for each decoder layer (for skip connections)
         decoder_channel_sizes = []
         
         for level in reversed(range(self.num_levels)):
@@ -237,7 +237,7 @@ class EDSRUnetNoisePredictor(nn.Module):
             
             block = nn.ModuleList()
             
-            # 添加多个残差块
+            # Add multiple residual blocks
             for _ in range(num_res_blocks):
                 block.append(
                     EDSRTimeModulatedBlock(
@@ -248,45 +248,45 @@ class EDSRUnetNoisePredictor(nn.Module):
                     )
                 )
             
-            # 添加上采样（最后一层不上采样）
+            # Add upsampling (last layer does not upsample)
             if level > 0:
                 block.append(Upsample(current_channels))
-                current_channels = current_channels // 2  # 上采样后通道减半
+                current_channels = current_channels // 2  # Halve channels after upsampling
 
             self.decoder.append(block)
         
-        # 创建跳跃连接的通道匹配卷积
+        # Create channel matching convolutions for skip connections
         self.skip_convs = nn.ModuleList()
         
-        # 编码器保存的通道数列表（每个level处理后的通道数）
+        # List of channel counts saved by encoder (channels after each level processing)
         encoder_channels_list = []
         current_channels = model_channels
         for level in range(self.num_levels):
-            # 每个level处理完后保存的通道数
+            # Channel count after each level processing
             encoder_channels_list.append(current_channels)
             if level < self.num_levels - 1:
-                # 下采样后通道翻倍
+                # Double channels after downsampling
                 current_channels *= 2
         
-        # 为每个解码器层创建对应的跳跃连接卷积
-        # 解码器从深层到浅层，编码器从浅层到深层
-        # 因此需要反向匹配：decoder_level 0使用encoder_level (num_levels-1)
+        # Create corresponding skip connection convolutions for each decoder layer
+        # Decoder goes from deep to shallow, encoder goes from shallow to deep
+        # Therefore need reverse matching: decoder_level 0 uses encoder_level (num_levels-1)
         for i in range(self.num_levels):
-            # 解码器第i层对应编码器第(num_levels-1-i)层
+            # Decoder layer i corresponds to encoder layer (num_levels-1-i)
             encoder_idx = self.num_levels - 1 - i
             encoder_channels = encoder_channels_list[encoder_idx]
-            # 对应解码器层的输入通道数
+            # Input channel count for corresponding decoder layer
             decoder_channels = decoder_channel_sizes[i]
             
-            # 创建通道匹配卷积
+            # Create channel matching convolution
             self.skip_convs.append(
                 nn.Conv2d(encoder_channels, decoder_channels, kernel_size=1)
             )
 
-        # 输出层
+        # Output layer
         output_channels = latent_channels * 2 if double_z else latent_channels
-        # 使用解码器最后一层的输出通道数
-        # 解码器最后一层是decoder_channel_sizes的最后一个元素
+        # Use output channel count of the last decoder layer
+        # The last decoder layer is the last element of decoder_channel_sizes
         final_decoder_channels = decoder_channel_sizes[-1]
         self.output = nn.Sequential(
             nn.Conv2d(final_decoder_channels, model_channels, 3, padding=1),
@@ -296,67 +296,67 @@ class EDSRUnetNoisePredictor(nn.Module):
 
     def forward(
         self,
-        z_t: torch.Tensor,          # 中间状态
-        lr_latent: torch.Tensor,    # 初始LR
-        timesteps: torch.Tensor,    # 当前时间步
+        z_t: torch.Tensor,          # Intermediate state
+        lr_latent: torch.Tensor,    # Initial LR
+        timesteps: torch.Tensor,    # Current timestep
         sample_posterior: bool = True,
         generator: Optional[torch.Generator] = None
     ) -> Union[torch.Tensor, DiagonalGaussianDistribution, NoisePredictorOutput]:
-        # 时间步嵌入
+        # Timestep embedding
         t_emb = timestep_embedding(timesteps, self.model_channels)
         t_emb = self.time_embed(t_emb)
 
-        # 输入融合: 中间状态 + 初始LR
+        # Input fusion: intermediate state + initial LR
         z_feat = self.z_proj(z_t)
         lr_feat = self.lr_proj(lr_latent)
         x = self.input_fusion(torch.cat([z_feat, lr_feat], dim=1))
 
-        # 编码器前向
+        # Encoder forward pass
         skip_connections = []
         for level in range(self.num_levels):
-            # 先经过所有residual blocks
+            # Pass through all residual blocks first
             for i, block in enumerate(self.encoder[level]):
                 if isinstance(block, EDSRTimeModulatedBlock):
                     x = block(x, t_emb)
-                else:  # 下采样
-                    # 在下采样前保存特征
+                else:  # Downsampling
+                    # Save features before downsampling
                     skip_connections.append(x.clone())
                     x = block(x)
             
-            # 如果是最后一层，需要保存特征
-            # 注意：最后一层没有下采样，所以需要在这里保存
+            # If it's the last layer, need to save features
+            # Note: last layer has no downsampling, so save it here
             if level == self.num_levels - 1:
                 skip_connections.append(x.clone())
 
-        # 反转skip_connections顺序，使其与decoder的顺序一致
-        # encoder: [level0, level1, level2, level3] -> [浅层到深层]
-        # decoder需要: [level3, level2, level1, level0] -> [深层到浅层]
+        # Reverse skip_connections order to match decoder order
+        # encoder: [level0, level1, level2, level3] -> [shallow to deep]
+        # decoder needs: [level3, level2, level1, level0] -> [deep to shallow]
         skip_connections = skip_connections[::-1]
 
-        # 瓶颈层
+        # Bottleneck layer
         for block in self.bottleneck:
             x = block(x, t_emb)
 
-        # 解码器前向
-        # skip_connections现在是 [level3, level2, level1, level0]，与decoder顺序一致
+        # Decoder forward pass
+        # skip_connections is now [level3, level2, level1, level0], matching decoder order
         for level in range(self.num_levels):
-            # 获取对应的跳跃连接
+            # Get corresponding skip connection
             skip = skip_connections[level]
 
-            # 跳跃连接通道匹配
+            # Skip connection channel matching
             skip = self.skip_convs[level](skip)
 
-            # 跳跃连接融合（在处理任何block之前，确保尺寸匹配）
+            # Skip connection fusion (ensure size matching before processing any blocks)
             x = x + skip
 
-            # 经过该层的所有blocks（residual blocks和upsample）
+            # Pass through all blocks of this layer (residual blocks and upsample)
             for block in self.decoder[level]:
                 if isinstance(block, EDSRTimeModulatedBlock):
                     x = block(x, t_emb)
                 elif isinstance(block, Upsample):
                     x = block(x)
 
-        # 输出处理
+        # Output processing
         h_out = self.output(x)
 
         if self.double_z:
@@ -378,7 +378,7 @@ def create_noise_predictor(
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 创建模型
+    # Create model
     model = create_noise_predictor(
         latent_channels=3,
         model_channels=128,
@@ -388,24 +388,24 @@ if __name__ == "__main__":
         res_scale=0.1
     ).to(device)
 
-    # 测试输入: 中间状态、初始LR、时间步
+    # Test input: intermediate state, initial LR, timesteps
     batch_size = 2
     timesteps = torch.randint(0, 1000, (batch_size,)).to(device)
-    z_t = torch.randn(batch_size, 3, 64, 64).to(device)  # 中间状态
-    lr_latent = torch.randn(batch_size, 3, 64, 64).to(device)  # 初始LR
+    z_t = torch.randn(batch_size, 3, 64, 64).to(device)  # Intermediate state
+    lr_latent = torch.randn(batch_size, 3, 64, 64).to(device)  # Initial LR
 
-    # 测试前向传播
+    # Test forward pass
     print("=" * 50)
-    print("EDSR-Unet噪声预测器测试")
+    print("EDSR-Unet Noise Predictor Test")
     print("=" * 50)
 
     predicted_noise = model(z_t, lr_latent, timesteps, sample_posterior=True)
-    print(f"中间状态形状: {z_t.shape}")
-    print(f"初始LR形状: {lr_latent.shape}")
-    print(f"预测噪声形状: {predicted_noise.shape}")
+    print(f"Intermediate state shape: {z_t.shape}")
+    print(f"Initial LR shape: {lr_latent.shape}")
+    print(f"Predicted noise shape: {predicted_noise.shape}")
 
     posterior = model(z_t, lr_latent, timesteps, sample_posterior=False)
-    print(f"分布均值形状: {posterior.mean.shape}")
-    print(f"分布方差形状: {posterior.var.shape}")
+    print(f"Distribution mean shape: {posterior.mean.shape}")
+    print(f"Distribution variance shape: {posterior.var.shape}")
 
-    print(f"\n模型参数量: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+    print(f"\nModel parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")

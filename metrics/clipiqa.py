@@ -1,8 +1,9 @@
 """
-CLIP-IQA (CLIP-based Image Quality Assessment) 基于CLIP的图像质量评估
+CLIP-IQA (CLIP-based Image Quality Assessment) CLIP-based Image Quality Assessment
 
-无参考图像质量评估指标，利用CLIP模型的视觉-语言对齐能力来评估图像质量。
-分数越高表示图像质量越好。
+No-reference image quality assessment metric, using CLIP model's 
+vision-language alignment capability to assess image quality.
+Higher scores indicate better image quality.
 """
 
 import numpy as np
@@ -19,15 +20,15 @@ def calculate_clipiqa(
     **kwargs
 ) -> float:
     """
-    计算图像的CLIP-IQA分数
+    Calculate CLIP-IQA score of image
     
     Args:
-        img: 输入图像
-        input_order: 输入图像的维度顺序
-        device: 计算设备
+        img: Input image
+        input_order: Dimension order of input image
+        device: Computation device
         
     Returns:
-        CLIP-IQA分数 (越高越好，范围[0, 1])
+        CLIP-IQA score (higher is better, range [0, 1])
     """
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -78,13 +79,13 @@ class CLIPIQA(nn.Module):
             import pyiqa
             self.pyiqa_model = pyiqa.create_metric('clipiqa', device=self.device)
         except ImportError:
-            warnings.warn("pyiqa包未安装，请安装: pip install pyiqa")
+            warnings.warn("pyiqa package is not installed, please install: pip install pyiqa")
         except Exception as e:
-            warnings.warn(f"初始化CLIP-IQA失败: {e}")
+            warnings.warn(f"Failed to initialize CLIP-IQA: {e}")
     
     def forward(self, img: Union[np.ndarray, torch.Tensor]) -> float:
         if self.pyiqa_model is None:
-            warnings.warn("CLIP-IQA模型未初始化")
+            warnings.warn("CLIP-IQA model is not initialized")
             return 0.0
         
         if isinstance(img, np.ndarray):

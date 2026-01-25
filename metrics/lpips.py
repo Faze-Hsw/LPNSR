@@ -1,8 +1,9 @@
 """
-LPIPS (Learned Perceptual Image Patch Similarity) 学习感知图像块相似度
+LPIPS (Learned Perceptual Image Patch Similarity) Learned Perceptual Image Patch Similarity
 
-全参考图像质量评估指标，使用预训练深度网络提取特征来衡量感知相似度。
-LPIPS值越低表示感知质量越相似。
+Full-reference image quality assessment metric, using pre-trained deep networks 
+to extract features for measuring perceptual similarity.
+Lower LPIPS values indicate more similar perceptual quality.
 """
 
 import numpy as np
@@ -13,7 +14,7 @@ import warnings
 
 
 class LPIPS(nn.Module):
-    """LPIPS计算类"""
+    """LPIPS calculation class"""
     
     def __init__(
         self,
@@ -29,7 +30,7 @@ class LPIPS(nn.Module):
         self._init_model()
     
     def _init_model(self):
-        """初始化LPIPS模型"""
+        """Initialize LPIPS model"""
         try:
             import lpips
             self.model = lpips.LPIPS(net=self.net_type, spatial=self.spatial)
@@ -37,7 +38,7 @@ class LPIPS(nn.Module):
                 self.model = self.model.cuda()
             self.model.eval()
         except ImportError:
-            warnings.warn("lpips包未安装，请使用 'pip install lpips' 安装")
+            warnings.warn("lpips package is not installed, please use 'pip install lpips' to install")
             self.model = None
     
     def forward(
@@ -47,10 +48,10 @@ class LPIPS(nn.Module):
         normalize: bool = True
     ) -> float:
         if self.model is None:
-            warnings.warn("LPIPS模型未初始化")
+            warnings.warn("LPIPS model is not initialized")
             return 0.0
         
-        # 转换为张量
+        # Convert to tensor
         if isinstance(img1, np.ndarray):
             img1 = torch.from_numpy(img1).float()
             if img1.ndim == 3:
@@ -65,13 +66,13 @@ class LPIPS(nn.Module):
         if img2.ndim == 3:
             img2 = img2.unsqueeze(0)
         
-        # 归一化到[0, 1]
+        # Normalize to [0, 1]
         if img1.max() > 5.0:
             img1 = img1 / 255.0
         if img2.max() > 5.0:
             img2 = img2 / 255.0
         
-        # 归一化到[-1, 1]
+        # Normalize to [-1, 1]
         if normalize:
             img1 = img1 * 2.0 - 1.0
             img2 = img2 * 2.0 - 1.0
@@ -95,6 +96,6 @@ def calculate_lpips(
     net: str = 'alex',
     use_gpu: bool = True
 ) -> float:
-    """计算两张图像之间的LPIPS值"""
+    """Calculate LPIPS value between two images"""
     lpips_model = LPIPS(net=net, use_gpu=use_gpu)
     return lpips_model(img1, img2)

@@ -1,6 +1,6 @@
 """
-SR模型模块
-包含UNet-SwinTransformer网络和EDSR-Unet噪声预测器用于图像超分辨率
+SR Model Module
+Includes UNet-SwinTransformer network and EDSR-Unet noise predictor for image super-resolution
 """
 
 from .unet import UNetModelSwin

@@ -1,8 +1,8 @@
 """
-MUSIQ (Multi-Scale Image Quality Transformer) 多尺度图像质量Transformer
+MUSIQ (Multi-Scale Image Quality Transformer) Multi-Scale Image Quality Transformer
 
-无参考图像质量评估指标，使用多尺度Transformer架构。
-分数越高表示图像质量越好。
+No-reference image quality assessment metric, using multi-scale Transformer architecture.
+Higher scores indicate better image quality.
 """
 
 import numpy as np
@@ -19,15 +19,15 @@ def calculate_musiq(
     **kwargs
 ) -> float:
     """
-    计算图像的MUSIQ分数
+    Calculate MUSIQ score of image
     
     Args:
-        img: 输入图像
-        input_order: 输入图像的维度顺序
-        device: 计算设备
+        img: Input image
+        input_order: Dimension order of input image
+        device: Computation device
         
     Returns:
-        MUSIQ分数 (越高越好)
+        MUSIQ score (higher is better)
     """
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -86,9 +86,9 @@ class MUSIQ(nn.Module):
             
             self.pyiqa_model = pyiqa.create_metric(model_name, device=self.device)
         except ImportError:
-            warnings.warn("pyiqa包未安装，请安装: pip install pyiqa")
+            warnings.warn("pyiqa package is not installed, please install: pip install pyiqa")
         except Exception as e:
-            warnings.warn(f"初始化MUSIQ失败: {e}")
+            warnings.warn(f"Failed to initialize MUSIQ: {e}")
             try:
                 import pyiqa
                 self.pyiqa_model = pyiqa.create_metric('musiq', device=self.device)
@@ -97,7 +97,7 @@ class MUSIQ(nn.Module):
     
     def forward(self, img: Union[np.ndarray, torch.Tensor]) -> float:
         if self.pyiqa_model is None:
-            warnings.warn("MUSIQ模型未初始化")
+            warnings.warn("MUSIQ model is not initialized")
             return 0.0
         
         if isinstance(img, np.ndarray):

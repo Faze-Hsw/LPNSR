@@ -1,14 +1,14 @@
 """
-SR项目图像质量评估指标模块
+SR Project Image Quality Assessment Metrics Module
 
-包含以下指标:
-- PSNR: 峰值信噪比 (全参考指标)
-- SSIM: 结构相似性指数 (全参考指标)
-- LPIPS: 学习感知图像块相似度 (全参考指标)
-- NIQE: 自然图像质量评估器 (无参考指标)
-- PI: 感知指数 (无参考指标)
-- CLIPIQA: 基于CLIP的图像质量评估 (无参考指标)
-- MUSIQ: 多尺度图像质量Transformer (无参考指标)
+Includes the following metrics:
+|- PSNR: Peak Signal-to-Noise Ratio (full-reference metric)
+|- SSIM: Structural Similarity Index (full-reference metric)
+|- LPIPS: Learned Perceptual Image Patch Similarity (full-reference metric)
+|- NIQE: Natural Image Quality Evaluator (no-reference metric)
+|- PI: Perceptual Index (no-reference metric)
+|- CLIPIQA: CLIP-based Image Quality Assessment (no-reference metric)
+|- MUSIQ: Multi-Scale Image Quality Transformer (no-reference metric)
 """
 
 from .psnr import calculate_psnr, PSNR
@@ -49,7 +49,7 @@ __all__ = [
     # MUSIQ
     'calculate_musiq',
     'MUSIQ',
-    # 工具函数
+    # Utility functions
     'img2tensor',
     'tensor2img',
     'rgb2ycbcr',

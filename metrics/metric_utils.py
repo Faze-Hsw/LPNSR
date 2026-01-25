@@ -1,5 +1,5 @@
 """
-图像质量评估的通用工具函数
+Common utility functions for image quality assessment
 """
 
 import numpy as np
@@ -14,15 +14,15 @@ def img2tensor(
     float32: bool = True
 ) -> Union[torch.Tensor, list]:
     """
-    将numpy图像转换为PyTorch张量
+    Convert numpy images to PyTorch tensors
     
     Args:
-        imgs: 输入图像(numpy数组)或图像列表
-        bgr2rgb: 是否将BGR转换为RGB
-        float32: 是否转换为float32类型
+        imgs: Input images (numpy arrays) or image list
+        bgr2rgb: Whether to convert BGR to RGB
+        float32: Whether to convert to float32 type
         
     Returns:
-        PyTorch张量或张量列表
+        PyTorch tensor or tensor list
     """
     def _totensor(img, bgr2rgb, float32):
         if img.shape[2] == 3 and bgr2rgb:
@@ -47,16 +47,16 @@ def tensor2img(
     min_max: Tuple[float, float] = (0, 1)
 ) -> Union[np.ndarray, list]:
     """
-    将PyTorch张量转换为numpy图像
+    Convert PyTorch tensors to numpy images
     
     Args:
-        tensor: 输入张量，形状为(B, C, H, W)或(C, H, W)
-        rgb2bgr: 是否将RGB转换为BGR
-        out_type: 输出类型
-        min_max: 输入张量的最小最大值范围
+        tensor: Input tensor, shape (B, C, H, W) or (C, H, W)
+        rgb2bgr: Whether to convert RGB to BGR
+        out_type: Output type
+        min_max: Min-max value range of input tensor
         
     Returns:
-        numpy图像或图像列表
+        Numpy image or image list
     """
     if not (torch.is_tensor(tensor) or (isinstance(tensor, list) and all(torch.is_tensor(t) for t in tensor))):
         raise TypeError(f'tensor or list of tensors expected, got {type(tensor)}')
@@ -98,14 +98,14 @@ def tensor2img(
 
 def rgb2ycbcr(img: np.ndarray, y_only: bool = False) -> np.ndarray:
     """
-    将RGB图像转换为YCbCr颜色空间
+    Convert RGB image to YCbCr color space
     
     Args:
-        img: 输入RGB图像，值范围[0, 255]
-        y_only: 是否只返回Y通道
+        img: Input RGB image, value range [0, 255]
+        y_only: Whether to return only Y channel
         
     Returns:
-        YCbCr图像或Y通道
+        YCbCr image or Y channel
     """
     img_type = img.dtype
     img = img.astype(np.float32)
@@ -125,14 +125,14 @@ def rgb2ycbcr(img: np.ndarray, y_only: bool = False) -> np.ndarray:
 
 def bgr2ycbcr(img: np.ndarray, y_only: bool = False) -> np.ndarray:
     """
-    将BGR图像转换为YCbCr颜色空间
+    Convert BGR image to YCbCr color space
     
     Args:
-        img: 输入BGR图像，值范围[0, 255]
-        y_only: 是否只返回Y通道
+        img: Input BGR image, value range [0, 255]
+        y_only: Whether to return only Y channel
         
     Returns:
-        YCbCr图像或Y通道
+        YCbCr image or Y channel
     """
     img_type = img.dtype
     img = img.astype(np.float32)
@@ -152,13 +152,13 @@ def bgr2ycbcr(img: np.ndarray, y_only: bool = False) -> np.ndarray:
 
 def to_y_channel(img: np.ndarray) -> np.ndarray:
     """
-    将图像转换为Y通道 (亮度通道)
+    Convert image to Y channel (luminance channel)
     
     Args:
-        img: 输入图像，BGR格式，值范围[0, 255]
+        img: Input image, BGR format, value range [0, 255]
         
     Returns:
-        Y通道图像
+        Y channel image
     """
     img = img.astype(np.float32) / 255.0
     if img.ndim == 3 and img.shape[2] == 3:
@@ -172,14 +172,14 @@ def reorder_image(
     input_order: str = 'HWC'
 ) -> np.ndarray:
     """
-    重新排列图像维度到HWC格式
+    Reorder image dimensions to HWC format
     
     Args:
-        img: 输入图像
-        input_order: 输入图像的维度顺序，'HWC'或'CHW'
+        img: Input image
+        input_order: Dimension order of input image, 'HWC' or 'CHW'
         
     Returns:
-        HWC格式的图像
+        Image in HWC format
     """
     if input_order not in ['HWC', 'CHW']:
         raise ValueError(f'Wrong input_order {input_order}. Supported orders are "HWC" and "CHW"')

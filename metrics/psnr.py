@@ -1,8 +1,8 @@
 """
-PSNR (Peak Signal-to-Noise Ratio) 峰值信噪比
+PSNR (Peak Signal-to-Noise Ratio) Peak Signal-to-Noise Ratio
 
-全参考图像质量评估指标，用于衡量图像重建质量。
-PSNR值越高表示图像质量越好，通常用dB表示。
+Full-reference image quality assessment metric, used to measure image reconstruction quality.
+Higher PSNR values indicate better image quality, usually expressed in dB.
 """
 
 import numpy as np
@@ -21,18 +21,18 @@ def calculate_psnr(
     data_range: float = 255.0
 ) -> float:
     """
-    计算两张图像之间的PSNR值
+    Calculate PSNR value between two images
     
     Args:
-        img1: 第一张图像 (通常是重建图像/SR图像)
-        img2: 第二张图像 (通常是参考图像/GT图像)
-        crop_border: 计算前裁剪的边界像素数
-        input_order: 输入图像的维度顺序，'HWC'或'CHW'
-        test_y_channel: 是否只在Y通道上测试 (用于彩色图像)
-        data_range: 图像数据范围，默认255
+        img1: First image (usually reconstructed/SR image)
+        img2: Second image (usually reference/GT image)
+        crop_border: Number of border pixels to crop before calculation
+        input_order: Dimension order of input images, 'HWC' or 'CHW'
+        test_y_channel: Whether to test only on Y channel (for color images)
+        data_range: Image data range, default 255
         
     Returns:
-        PSNR值 (dB)
+        PSNR value (dB)
     """
     if torch.is_tensor(img1):
         img1 = img1.detach().cpu().numpy()
@@ -64,7 +64,7 @@ def calculate_psnr(
 
 
 class PSNR(nn.Module):
-    """PSNR计算类"""
+    """PSNR calculation class"""
     
     def __init__(
         self,
