@@ -50,7 +50,6 @@ matplotlib.use('Agg')  # 使用非交互式后端，适合服务器环境
 from LPNSR.models.noise_predictor import create_noise_predictor
 from LPNSR.models.unet import UNetModelSwin
 from LPNSR.ldm.models.autoencoder import VQModelTorch
-from LPNSR.losses.basic_loss import L2Loss
 from LPNSR.losses.lpips_loss import LPIPSLoss
 from LPNSR.losses.gan_loss import GANLoss, create_discriminator
 from LPNSR.datapipe.train_dataloader import create_train_dataloader
@@ -350,26 +349,58 @@ class NoisePredictorTrainer:
         if 'config_path' in noise_config:
             with open(noise_config['config_path'], 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
-            # 使用配置文件中的参数
             self.noise_predictor = create_noise_predictor(
+                image_size=config.get('image_size', latent_size),
                 latent_channels=config['latent_channels'],
                 model_channels=config['model_channels'],
+                out_channels=config.get('out_channels', config['latent_channels']),
                 channel_mult=tuple(config['channel_mult']),
                 num_res_blocks=config['num_res_blocks'],
-                growth_rate=config['growth_rate'],
-                res_scale=config['res_scale'],
-                double_z=config['double_z']
+                attention_resolutions=config.get('attention_resolutions', [64, 32, 16, 8]),
+                dropout=config.get('dropout', 0.0),
+                conv_resample=config.get('conv_resample', True),
+                dims=config.get('dims', 2),
+                use_fp16=config.get('use_fp16', False),
+                num_heads=config.get('num_heads', -1),
+                num_head_channels=config.get('num_head_channels', 32),
+                use_scale_shift_norm=config.get('use_scale_shift_norm', True),
+                resblock_updown=config.get('resblock_updown', False),
+                swin_depth=config.get('swin_depth', 2),
+                swin_embed_dim=config.get('swin_embed_dim', 192),
+                window_size=config.get('window_size', 8),
+                mlp_ratio=config.get('mlp_ratio', 4.0),
+                patch_norm=config.get('patch_norm', False),
+                cond_lq=config.get('cond_lq', True),
+                lq_size=config.get('lq_size', latent_size),
+                use_gradient_checkpointing=self.config['training'].get('use_gradient_checkpointing', False),
+                double_z=config.get('double_z', True),
             ).to(self.device)
         else:
-            # 使用直接指定的参数
             self.noise_predictor = create_noise_predictor(
+                image_size=noise_config.get('image_size', latent_size),
                 latent_channels=noise_config['latent_channels'],
                 model_channels=noise_config['model_channels'],
+                out_channels=noise_config.get('out_channels', noise_config['latent_channels']),
                 channel_mult=tuple(noise_config['channel_mult']),
                 num_res_blocks=noise_config['num_res_blocks'],
-                growth_rate=noise_config.get('growth_rate', 32),
-                res_scale=noise_config.get('res_scale', 0.1),
-                double_z=noise_config.get('double_z', True)
+                attention_resolutions=noise_config.get('attention_resolutions', [64, 32, 16, 8]),
+                dropout=noise_config.get('dropout', 0.0),
+                conv_resample=noise_config.get('conv_resample', True),
+                dims=noise_config.get('dims', 2),
+                use_fp16=noise_config.get('use_fp16', False),
+                num_heads=noise_config.get('num_heads', -1),
+                num_head_channels=noise_config.get('num_head_channels', 32),
+                use_scale_shift_norm=noise_config.get('use_scale_shift_norm', True),
+                resblock_updown=noise_config.get('resblock_updown', False),
+                swin_depth=noise_config.get('swin_depth', 2),
+                swin_embed_dim=noise_config.get('swin_embed_dim', 192),
+                window_size=noise_config.get('window_size', 8),
+                mlp_ratio=noise_config.get('mlp_ratio', 4.0),
+                patch_norm=noise_config.get('patch_norm', False),
+                cond_lq=noise_config.get('cond_lq', True),
+                lq_size=noise_config.get('lq_size', latent_size),
+                use_gradient_checkpointing=self.config['training'].get('use_gradient_checkpointing', False),
+                double_z=noise_config.get('double_z', True),
             ).to(self.device)
 
         num_params = sum(p.numel() for p in self.noise_predictor.parameters())
@@ -389,9 +420,8 @@ class NoisePredictorTrainer:
 
         loss_config = self.config['loss']
 
-        # L2损失
-        self.l2_loss = L2Loss()
-        print(f"✓ L2损失 (权重: {loss_config['l2_weight']})")
+        # L1损失（图像空间，不需要单独初始化，使用 F.l1_loss）
+        print(f"✓ L1损失 (权重: {loss_config.get('l1_weight', 1.0)})")
 
         # LPIPS感知损失
         if loss_config.get('lpips_weight', 0) > 0:
@@ -588,7 +618,7 @@ class NoisePredictorTrainer:
 
         return posterior_mean, posterior_variance, posterior_log_variance
 
-    def multi_step_training_loss(self, z_start, z_y, lr_image):
+    def multi_step_training_loss(self, z_start, z_y, hr_image,lr_image):
         """
         多步训练损失计算 - 与推理流程完全一致
 
@@ -605,6 +635,7 @@ class NoisePredictorTrainer:
         Args:
             z_start: HR图像的潜在表示 z_0 [B, C, H, W]
             z_y: LR图像的潜在表示 y [B, C, H, W]
+            hr_image: 原始HR图像 [B, 3, H, W],用于图像空间损失计算
             lr_image: 图像空间的LR图像（用作UNet的lq条件）
 
         Returns:
@@ -623,14 +654,6 @@ class NoisePredictorTrainer:
         sqrt_eta_T = self._extract(self.sqrt_etas, t_init_tensor, z_y.shape)
         predicted_noise_init = torch.randn_like(z_y)
         x_t = z_y + self.kappa * sqrt_eta_T * predicted_noise_init
-
-        # 调试信息：打印初始化统计
-        if self.epoch_step == 0:
-            with torch.no_grad():
-                print(f"\n[多步训练 Epoch {self.current_epoch}] 初始化 x_T:")
-                print(f"  z_y: mean={z_y.mean():.4f}, std={z_y.std():.4f}")
-                print(f"  初始噪声: mean={predicted_noise_init.mean():.4f}, std={predicted_noise_init.std():.4f}")
-                print(f"  x_T: mean={x_t.mean():.4f}, std={x_t.std():.4f}")
 
         # 2. 多步反向采样（与推理流程一致）
         # 从 num_timesteps-1 到 0
@@ -651,7 +674,7 @@ class NoisePredictorTrainer:
                 mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0, x_t, t_tensor)
 
                 # 使用噪声预测器预测噪声（需要梯度）
-                predicted_noise = self.noise_predictor(x_t, lr_image, t_tensor, sample_posterior=True)
+                predicted_noise = self.noise_predictor(x_t, pred_x0, lr_image, t_tensor, sample_posterior=True)
 
                 # 采样 x_{t-1}
                 # nonzero_mask 在这里总是 1，因为 i > 0
@@ -660,101 +683,45 @@ class NoisePredictorTrainer:
         # 最终的 pred_x0 就是我们的预测结果
         final_pred_x0 = pred_x0
 
-        # 调试信息
-        if self.epoch_step == 0:
-            with torch.no_grad():
-                print(f"[多步训练 Epoch {self.current_epoch}] 最终结果:")
-                print(f"  pred_x0: mean={final_pred_x0.mean():.4f}, std={final_pred_x0.std():.4f}")
-                print(f"  z_start: mean={z_start.mean():.4f}, std={z_start.std():.4f}")
-                diff = (final_pred_x0 - z_start).abs().mean().item()
-                print(f"  |pred_x0 - z_start| 平均差异: {diff:.4f}")
-
-        # 3. 对比实验：与随机噪声的基线比较
-        if self.epoch_step == 0:
-            with torch.no_grad():
-                # 使用随机噪声执行相同的多步采样
-                random_noise_init = torch.randn_like(z_y)
-                x_t_random = z_y + self.kappa * sqrt_eta_T * random_noise_init
-
-                for i in indices:
-                    t_tensor = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
-                    x_t_normalized = self._scale_input(x_t_random, t_tensor)
-                    pred_x0_random = self.resshift_unet(x_t_normalized, t_tensor, lq=lr_image)
-
-                    if i > 0:
-                        mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0_random, x_t_random,
-                                                                                      t_tensor)
-                        random_noise = torch.randn_like(x_t_random)
-                        x_t_random = mean + torch.exp(0.5 * log_variance) * random_noise
-
-                # 计算基线损失
-                baseline_l2 = F.mse_loss(pred_x0_random, z_start).item()
-                current_l2 = F.mse_loss(final_pred_x0, z_start).item()
-                baseline_lpips = self.lpips_loss(self.vae.decode(pred_x0_random)*0.5+0.5, self.vae.decode(z_start)*0.5+0.5).item()
-                current_lpips = self.lpips_loss(self.vae.decode(final_pred_x0)*0.5+0.5, self.vae.decode(z_start)*0.5+0.5).item()
-
-                # 计算改进百分比
-                improvement = (baseline_l2 - current_l2) / baseline_l2 * 100
-
-                print(
-                    f"[多步对比 Epoch {self.current_epoch}] 随机噪声LPIPS: {baseline_lpips:.4f} | 预测噪声LPIPS: {current_lpips:.4f}"
-                    )
-                print(
-                    f"[多步对比 Epoch {self.current_epoch}] 随机噪声L2: {baseline_l2:.4f} | 预测噪声L2: {current_l2:.4f}")
-                if current_l2 < baseline_l2:
-                    print(f"[多步对比 Epoch {self.current_epoch}] ✓ 预测噪声优于随机噪声，改进: {improvement:.2f}%")
-                else:
-                    print(f"[多步对比 Epoch {self.current_epoch}] ✗ 预测噪声不如随机噪声，差距: {-improvement:.2f}%")
-
         # 4. 计算损失
         loss_config = self.config['loss']
         total_loss = 0.0
 
-        # L2 损失
-        l2 = self.l2_loss(final_pred_x0, z_start)
-        loss_dict['l2'] = l2.item()
-        total_loss += loss_config['l2_weight'] * l2
+        # 解码到图像空间
+        # 注意：pred_image 需要保留梯度以便损失能够反向传播到噪声预测器
+        # VAE虽然是冻结的，但梯度仍然可以通过它传回到 final_pred_x0
+        pred_image = self.vae.decode(final_pred_x0)  # [-1, 1]，保留梯度
+        pred_image = torch.clamp(pred_image, -1, 1)
+        pred_image = pred_image * 0.5 + 0.5  # [0, 1]
 
-        # LPIPS感知损失和GAN损失（在图像空间计算）
-        need_image_space = (
-                (self.lpips_loss is not None and loss_config.get('lpips_weight', 0) > 0) or
-                (self.gan_loss is not None and loss_config.get('gan_weight', 0) > 0)
-        )
+        gt_image = hr_image * 0.5 + 0.5  # [0, 1]
 
-        if need_image_space:
-            # 解码到图像空间
-            # 注意：pred_image 需要保留梯度以便感知损失能够反向传播到噪声预测器
-            # VAE虽然是冻结的，但梯度仍然可以通过它传回到 final_pred_x0
-            pred_image = self.vae.decode(final_pred_x0)  # [-1, 1]，保留梯度
-            pred_image = torch.clamp(pred_image, -1, 1)
-            pred_image = pred_image*0.5+0.5
+        # L1 损失（图像空间）
+        l1_weight = loss_config.get('l1_weight', 1.0)
+        l1_val = torch.nn.functional.l1_loss(pred_image, gt_image)
+        loss_dict['l1'] = l1_val.item()
+        total_loss += l1_weight * l1_val
 
-            # gt_image 不需要梯度
-            with torch.no_grad():
-                gt_image = self.vae.decode(z_start)  # [-1, 1]
-                gt_image = torch.clamp(gt_image, -1, 1)
-                gt_image = gt_image*0.5+0.5
+        # LPIPS 感知损失（图像空间）
+        if self.lpips_loss is not None and loss_config.get('lpips_weight', 0) > 0:
+            lpips_val = self.lpips_loss(pred_image, gt_image)
+            loss_dict['lpips'] = lpips_val.item()
+            total_loss += loss_config['lpips_weight'] * lpips_val
 
-            # LPIPS 感知损失（图像空间）
-            if self.lpips_loss is not None and loss_config.get('lpips_weight', 0) > 0:
-                lpips_val = self.lpips_loss(pred_image, gt_image)
-                loss_dict['lpips'] = lpips_val.item()
-                total_loss += loss_config['lpips_weight'] * lpips_val
+        # GAN 生成器损失（图像空间）
+        if self.gan_loss is not None and loss_config.get('gan_weight', 0) > 0:
+            # 检查是否达到判别器开始训练的epoch
+            disc_start_epoch = loss_config.get('disc_start_epoch', 0)
+            if self.current_epoch >= disc_start_epoch:
+                # 计算生成器损失：让判别器认为生成图像是真的
+                fake_pred = self.discriminator(pred_image)
+                g_loss = self.gan_loss(fake_pred, target_is_real=True, is_disc=False)
+                loss_dict['g_loss'] = g_loss.item()
+                total_loss += loss_config['gan_weight'] * g_loss
 
-            # GAN 生成器损失（图像空间）
-            if self.gan_loss is not None and loss_config.get('gan_weight', 0) > 0:
-                # 检查是否达到判别器开始训练的epoch
-                disc_start_epoch = loss_config.get('disc_start_epoch', 0)
-                if self.current_epoch >= disc_start_epoch:
-                    # 计算生成器损失：让判别器认为生成图像是真的
-                    fake_pred = self.discriminator(pred_image)
-                    g_loss = self.gan_loss(fake_pred, target_is_real=True, is_disc=False)
-                    loss_dict['g_loss'] = g_loss.item()
-                    total_loss += loss_config['gan_weight'] * g_loss
-
-            # 保存解码后的图像供判别器训练使用
-            self._pred_image_for_disc = pred_image.detach()
-            self._gt_image_for_disc = gt_image
+        # 保存解码后的图像供判别器训练使用
+        self._pred_image_for_disc = pred_image.detach()
+        self._gt_image_for_disc = gt_image
 
         loss_dict['total'] = total_loss.item()
 
@@ -867,11 +834,11 @@ class NoisePredictorTrainer:
         if self.config['training']['use_amp']:
             with autocast(device_type='cuda'):
                 loss, loss_dict = self.multi_step_training_loss(
-                    z_start, z_y, lr_images_norm
+                    z_start, z_y, hr_images_norm,lr_images_norm
                 )
         else:
             loss, loss_dict = self.multi_step_training_loss(
-                z_start, z_y, lr_images_norm
+                z_start, z_y, hr_images_norm,lr_images_norm
             )
 
         # 3. 真正的交替训练逻辑

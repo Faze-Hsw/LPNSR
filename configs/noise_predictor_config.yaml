@@ -1,14 +1,22 @@
+image_size: 64
 latent_channels: 3
-
-model_channels: 128
-
-channel_mult: [1, 2, 4, 8]
-
+model_channels: 160
+out_channels: 3
+channel_mult: [1, 2, 2, 4]
 num_res_blocks: 2
-
-growth_rate: 32
-
-res_scale: 0.1
-
+attention_resolutions: [64, 32, 16, 8]
+num_head_channels: 32
+use_scale_shift_norm: true
+swin_depth: 2
+swin_embed_dim: 192
+window_size: 8
+mlp_ratio: 4.0
+patch_norm: false
+cond_lq: true
+lq_size: 64
+dropout: 0.0
+conv_resample: true
+use_fp16: false
+resblock_updown: false
+dims: 2
 double_z: true
-

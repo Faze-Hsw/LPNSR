@@ -223,6 +223,7 @@ class ModelOutputsVisualizer:
             param.requires_grad = False
         print("  ✓ ResShift UNet加载完成")
 
+
         # 3. 加载噪声预测器
         print("  加载噪声预测器...")
         noise_predictor_config = self.config['noise_predictor']
@@ -231,23 +232,53 @@ class ModelOutputsVisualizer:
             with open(noise_predictor_config['config_path'], 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
             self.noise_predictor = create_noise_predictor(
+                image_size=config.get('image_size', 64),
                 latent_channels=config['latent_channels'],
                 model_channels=config['model_channels'],
+                out_channels=config.get('out_channels', config['latent_channels']),
                 channel_mult=tuple(config['channel_mult']),
                 num_res_blocks=config['num_res_blocks'],
-                growth_rate=config['growth_rate'],
-                res_scale=config['res_scale'],
-                double_z=config['double_z']
+                attention_resolutions=config.get('attention_resolutions', [64, 32, 16, 8]),
+                dropout=config.get('dropout', 0.0),
+                conv_resample=config.get('conv_resample', True),
+                dims=config.get('dims', 2),
+                use_fp16=config.get('use_fp16', False),
+                num_heads=config.get('num_heads', -1),
+                num_head_channels=config.get('num_head_channels', 32),
+                use_scale_shift_norm=config.get('use_scale_shift_norm', True),
+                resblock_updown=config.get('resblock_updown', False),
+                swin_depth=config.get('swin_depth', 2),
+                swin_embed_dim=config.get('swin_embed_dim', 192),
+                window_size=config.get('window_size', 8),
+                mlp_ratio=config.get('mlp_ratio', 4.0),
+                patch_norm=config.get('patch_norm', False),
+                cond_lq=config.get('cond_lq', True),
+                lq_size=config.get('lq_size', 64),
             )
         else:
             self.noise_predictor = create_noise_predictor(
+                image_size=noise_predictor_config.get('image_size', 64),
                 latent_channels=noise_predictor_config['latent_channels'],
                 model_channels=noise_predictor_config['model_channels'],
+                out_channels=noise_predictor_config.get('out_channels', noise_predictor_config['latent_channels']),
                 channel_mult=tuple(noise_predictor_config['channel_mult']),
                 num_res_blocks=noise_predictor_config['num_res_blocks'],
-                growth_rate=noise_predictor_config.get('growth_rate', 32),
-                res_scale=noise_predictor_config.get('res_scale', 0.1),
-                double_z=noise_predictor_config.get('double_z', True)
+                attention_resolutions=noise_predictor_config.get('attention_resolutions', [64, 32, 16, 8]),
+                dropout=noise_predictor_config.get('dropout', 0.0),
+                conv_resample=noise_predictor_config.get('conv_resample', True),
+                dims=noise_predictor_config.get('dims', 2),
+                use_fp16=noise_predictor_config.get('use_fp16', False),
+                num_heads=noise_predictor_config.get('num_heads', -1),
+                num_head_channels=noise_predictor_config.get('num_head_channels', 32),
+                use_scale_shift_norm=noise_predictor_config.get('use_scale_shift_norm', True),
+                resblock_updown=noise_predictor_config.get('resblock_updown', False),
+                swin_depth=noise_predictor_config.get('swin_depth', 2),
+                swin_embed_dim=noise_predictor_config.get('swin_embed_dim', 192),
+                window_size=noise_predictor_config.get('window_size', 8),
+                mlp_ratio=noise_predictor_config.get('mlp_ratio', 4.0),
+                patch_norm=noise_predictor_config.get('patch_norm', False),
+                cond_lq=noise_predictor_config.get('cond_lq', True),
+                lq_size=noise_predictor_config.get('lq_size', 64),
             )
 
         noise_ckpt = torch.load(self.config['model']['noise_predictor_path'], map_location='cpu')
@@ -515,6 +546,7 @@ class ModelOutputsVisualizer:
 
             # 4. 使用NoisePredictor生成噪声
             # 注意：noise_predictor现在接受原始图像空间的lr_image[-1,1]，而不是潜空间的lr_latent
+            # noise_predictor 内部会处理分布采样
             noise = self.noise_predictor(x_t, lr_image, t_tensor, sample_posterior=True)
             noise_predictor_outputs.append(noise.clone())
 

@@ -48,10 +48,10 @@ degradation:
   config_path: "LPNSR/configs/realesrgan_degradation.yaml"
 
 loss:
-  l2_weight: 1.0
+  l1_weight: 1.0
 
-  lpips_weight: 2.0
-  lpips_net_type: 'alex'
+  lpips_weight: 1.0
+  lpips_net_type: 'vgg'
 
   gan_weight: 0.1
   gan_type: 'hinge'
@@ -68,7 +68,7 @@ optimizer:
   lr: 5.0e-5
   beta1: 0.9
   beta2: 0.999
-  weight_decay: 1.0e-6
+  weight_decay: 0
 
 scheduler:
   type: "CosineAnnealing"
