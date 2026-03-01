@@ -1,30 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-多步端到端训练噪声预测器（与推理流程完全一致）
-
-训练思路：
-1. 输入HR图像和LR图像
-2. 使用冻结的VAE编码到潜在空间
-3. 使用噪声预测器初始化 x_T = z_y + κ·√η_T·ε
-4. 多步反向采样（与推理完全一致）：
-   - UNet预测x_0
-   - 噪声预测器预测采样噪声
-   - 后验采样得到x_{t-1}
-5. 计算最终x_0与真实z_start的损失
-6. 反向传播，只更新噪声预测器
-
-关键：多步训练与推理流程完全一致，避免训练-推理不一致问题！
-- 使用eta调度而非beta调度
-- 残差偏移扩散：x_t = (1-η_t)·x_0 + η_t·y + √η_t·κ·ε
-- 后验分布：μ = (η_{t-1}/η_t)·x_t + (α_t/η_t)·x_0
+Multi-step End-to-End Noise Predictor Training
 """
 
 import os
 import sys
 import warnings
 
-# 在导入其他模块之前设置警告过滤器
 warnings.filterwarnings("ignore", message=".*A matching Triton is not available.*")
 warnings.filterwarnings("ignore", message=".*No module named 'triton'.*")
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -44,9 +27,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 
-matplotlib.use('Agg')  # 使用非交互式后端，适合服务器环境
+matplotlib.use('Agg')  # Use non-interactive backend, suitable for server environments
 
-# LPNSR模块导入
 from LPNSR.models.noise_predictor import create_noise_predictor
 from LPNSR.models.unet import UNetModelSwin
 from LPNSR.ldm.models.autoencoder import VQModelTorch
@@ -63,114 +45,114 @@ def get_named_eta_schedule(
         kappa=1.0,
         kwargs=None):
     """
-    获取ResShift的eta调度
+    Get the eta schedule for ResShift
 
-    这是ResShift特有的噪声调度方式，与DDPM的beta调度完全不同！
+    This is ResShift's unique noise scheduling method, completely different from DDPM's beta schedule!
 
     Args:
-        schedule_name: 调度类型（'exponential' 或 'ldm'）
-        num_diffusion_timesteps: 扩散步数T
-        min_noise_level: 最小噪声水平η_1
-        etas_end: 最大噪声水平η_T
-        kappa: 方差控制参数κ
-        kwargs: 额外参数（如power）
+        schedule_name: Schedule type ('exponential' or 'ldm')
+        num_diffusion_timesteps: Number of diffusion steps T
+        min_noise_level: Minimum noise level η_1
+        etas_end: Maximum noise level η_T
+        kappa: Variance control parameter κ
+        kwargs: Additional parameters (e.g., power)
 
     Returns:
-        sqrt_etas: √η_t数组，shape=(T,)
+        sqrt_etas: √η_t array, shape=(T,)
     """
     if kwargs is None:
         kwargs = {}
 
     if schedule_name == 'exponential':
-        # 指数调度（ResShift默认）
+        # Exponential schedule (ResShift default)
         power = kwargs.get('power', 2.0)
         etas_start = min(min_noise_level / kappa, min_noise_level)
 
-        # 计算增长因子
+        # Calculate growth factor
         increaser = math.exp(1 / (num_diffusion_timesteps - 1) * math.log(etas_end / etas_start))
         base = np.ones([num_diffusion_timesteps, ]) * increaser
 
-        # 计算幂次时间步
+        # Calculate power timestep
         power_timestep = np.linspace(0, 1, num_diffusion_timesteps, endpoint=True) ** power
         power_timestep *= (num_diffusion_timesteps - 1)
 
-        # 计算sqrt_etas
+        # Calculate sqrt_etas
         sqrt_etas = np.power(base, power_timestep) * etas_start
 
     elif schedule_name == 'ldm':
-        # 从.mat文件加载
+        # Load from .mat file
         import scipy.io as sio
         mat_path = kwargs.get('mat_path', None)
         if mat_path is None:
-            raise ValueError("ldm schedule需要提供mat_path")
+            raise ValueError("ldm schedule requires mat_path")
         sqrt_etas = sio.loadmat(mat_path)['sqrt_etas'].reshape(-1)
 
     else:
-        raise ValueError(f"未知的schedule_name: {schedule_name}")
+        raise ValueError(f"Unknown schedule_name: {schedule_name}")
 
     return sqrt_etas
 
 
 class NoisePredictorTrainer:
-    """噪声预测器端到端训练器"""
+    """Noise Predictor End-to-End Trainer"""
 
     def __init__(self, config_path):
         """
-        初始化训练器
+        Initialize trainer
 
         Args:
-            config_path: 配置文件路径
+            config_path: Config file path
         """
-        # 加载配置
+        # Load config
         with open(config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # 创建实验目录
+        # Create experiment directory
         self.exp_dir = Path(self.config['experiment']['save_dir'])
         self.exp_dir.mkdir(parents=True, exist_ok=True)
         (self.exp_dir / 'checkpoints').mkdir(exist_ok=True)
         (self.exp_dir / 'samples').mkdir(exist_ok=True)
 
-        # 初始化模型
+        # Initialize models
         self._init_models()
 
-        # 初始化损失函数
+        # Initialize losses
         self._init_losses()
 
-        # 初始化优化器
+        # Initialize optimizer
         self._init_optimizer()
 
-        # 初始化数据加载器
+        # Initialize dataloaders
         self._init_dataloaders()
 
-        # 初始化AMP
+        # Initialize AMP
         if self.config['training']['use_amp']:
-            self.scaler_g = GradScaler()  # 生成器专用scaler
+            self.scaler_g = GradScaler()  # Generator-specific scaler
             if self.discriminator is not None:
-                self.scaler_d = GradScaler()  # 判别器专用scaler
+                self.scaler_d = GradScaler()  # Discriminator-specific scaler
         else:
             self.scaler_g = None
             self.scaler_d = None
 
-        # 训练状态
+        # Training state
         self.current_epoch = 0
         self.global_step = 0
         self.best_loss = float('inf')
 
-        print(f"训练器初始化完成！")
-        print(f"实验目录: {self.exp_dir}")
-        print(f"设备: {self.device}")
+        print(f"Trainer initialized!")
+        print(f"Experiment directory: {self.exp_dir}")
+        print(f"Device: {self.device}")
 
     def _init_models(self):
-        """初始化模型"""
+        """Initialize models"""
         print("\n" + "=" * 70)
-        print("初始化模型")
+        print("Initializing Models")
         print("=" * 70)
 
-        # 1. 加载VQVAE（冻结）
-        print("\n加载VQVAE...")
+        # 1. Load VQVAE (frozen)
+        print("\nLoading VQVAE...")
         vae_path = self.config['resshift']['vae_path']
 
         ddconfig = {
@@ -200,14 +182,14 @@ class NoisePredictorTrainer:
             lora_tune_decoder=lora_tune_decoder,
         ).to(self.device)
 
-        # 加载预训练权重
+        # Load pretrained weights
         vae_ckpt = torch.load(vae_path, map_location=self.device)
         if 'state_dict' in vae_ckpt:
             state_dict = vae_ckpt['state_dict']
         else:
             state_dict = vae_ckpt
 
-        # 去除前缀
+        # Remove prefixes
         new_state_dict = {}
         for key, value in state_dict.items():
             new_key = key
@@ -221,10 +203,10 @@ class NoisePredictorTrainer:
         self.vae.eval()
         for param in self.vae.parameters():
             param.requires_grad = False
-        print(f"✓ VQVAE加载完成: {vae_path}")
+        print(f"✓ VQVAE loaded: {vae_path}")
 
-        # 2. 加载ResShift UNet（冻结）
-        print("\n加载ResShift UNet...")
+        # 2. Load ResShift UNet (frozen)
+        print("\nLoading ResShift UNet...")
         unet_path = self.config['resshift']['unet_path']
 
         crop_size = self.config['data']['train']['crop_size']
@@ -261,14 +243,14 @@ class NoisePredictorTrainer:
 
         self.resshift_unet = UNetModelSwin(**model_config).to(self.device)
 
-        # 加载预训练权重
+        # Load pretrained weights
         unet_ckpt = torch.load(unet_path, map_location=self.device)
         if 'state_dict' in unet_ckpt:
             state_dict = unet_ckpt['state_dict']
         else:
             state_dict = unet_ckpt
 
-        # 去除前缀
+        # Remove prefixes
         new_state_dict = {}
         for key, value in state_dict.items():
             new_key = key
@@ -282,15 +264,15 @@ class NoisePredictorTrainer:
         self.resshift_unet.eval()
         for param in self.resshift_unet.parameters():
             param.requires_grad = False
-        print(f"✓ ResShift UNet加载完成: {unet_path}")
+        print(f"✓ ResShift UNet loaded: {unet_path}")
 
-        # 3. 初始化ResShift扩散过程参数
-        print("\n初始化ResShift扩散过程...")
+        # 3. Initialize ResShift diffusion process parameters
+        print("\nInitializing ResShift diffusion process...")
         diffusion_config = self.config['training']['diffusion']
         self.num_timesteps = diffusion_config['num_timesteps']
         self.sampling_steps = self.config['training']['sampling_steps']
 
-        # ResShift特有参数
+        # ResShift-specific parameters
         self.kappa = diffusion_config['kappa']
         self.normalize_input = diffusion_config.get('normalize_input', True)
         self.latent_flag = diffusion_config.get('latent_flag', True)
@@ -299,7 +281,7 @@ class NoisePredictorTrainer:
         etas_end = diffusion_config['etas_end']
         eta_power = diffusion_config.get('eta_power', 0.3)
 
-        # 计算eta调度（ResShift方式）
+        # Calculate eta schedule (ResShift method)
         sqrt_etas = get_named_eta_schedule(
             schedule_name=eta_schedule,
             num_diffusion_timesteps=self.num_timesteps,
@@ -309,16 +291,16 @@ class NoisePredictorTrainer:
             kwargs={'power': eta_power}
         )
 
-        # 转换为torch tensor
+        # Convert to torch tensor
         self.sqrt_etas = torch.from_numpy(sqrt_etas).float()
         self.etas = self.sqrt_etas ** 2
 
-        # 计算etas_prev和alpha（ResShift方式）
-        # alpha_t = eta_t - eta_{t-1}，这是ResShift的正确定义！
+        # Calculate etas_prev and alpha (ResShift method)
+        # alpha_t = eta_t - eta_{t-1}, this is the correct definition in ResShift!
         self.etas_prev = torch.cat([torch.tensor([0.0]), self.etas[:-1]])
-        self.alpha = self.etas - self.etas_prev  # 增量
+        self.alpha = self.etas - self.etas_prev  # Increment
 
-        # 计算后验分布参数（ResShift方式）
+        # Calculate posterior distribution parameters (ResShift method)
         # q(x_{t-1} | x_t, x_0) = N(x_{t-1}; μ̃_t, σ̃_t²·I)
         # μ̃_t = (η_{t-1}/η_t)·x_t + (α_t/η_t)·x_0
         # σ̃_t² = κ²·(η_{t-1}/η_t)·α_t
@@ -326,26 +308,18 @@ class NoisePredictorTrainer:
         self.posterior_mean_coef2 = self.alpha / self.etas  # α_t/η_t
         self.posterior_variance = self.kappa ** 2 * self.etas_prev / self.etas * self.alpha
 
-        # 处理t=0的边界情况（避免NaN）
-        self.posterior_mean_coef1[0] = 0.0  # t=0时，eta_prev=0，所以coef1=0
-        self.posterior_mean_coef2[0] = 1.0  # t=0时，后验均值直接是x_0
-        self.posterior_variance[0] = self.posterior_variance[1]  # 避免除零
+        # Handle boundary case at t=0 (avoid NaN)
+        self.posterior_mean_coef1[0] = 0.0  # At t=0, eta_prev=0, so coef1=0
+        self.posterior_mean_coef2[0] = 1.0  # At t=0, posterior mean is directly x_0
+        self.posterior_variance[0] = self.posterior_variance[1]  # Avoid division by zero
         self.posterior_log_variance_clipped = torch.log(torch.clamp(self.posterior_variance, min=1e-20))
 
-        print(f"✓ ResShift扩散过程初始化完成")
-        print(f"  - 噪声调度类型: {eta_schedule}（ResShift特有）")
-        print(f"  - 总时间步数T: {self.num_timesteps}")
-        print(f"  - κ (kappa): {self.kappa}")
-        print(f"  - η范围: [{self.etas[0]:.4f}, {self.etas[-1]:.4f}]")
-        print(f"  - √η范围: [{self.sqrt_etas[0]:.4f}, {self.sqrt_etas[-1]:.4f}]")
-        print(f"  - 采样步数S: {self.sampling_steps}")
-        print(f"  - 输入归一化: {self.normalize_input}")
-        print(f"  - 初始化分布: N(y, κ²·η_T·I) = N(y, {self.kappa ** 2 * self.etas[-1]:.4f}·I)")
+        print(f"✓ ResShift diffusion process initialized")
 
-        # 5. 创建噪声预测器（训练）
-        print("\n创建噪声预测器...")
+        # 5. Create noise predictor (training)
+        print("\nCreating noise predictor...")
         noise_config = self.config['noise_predictor']
-        # 如果指定了配置文件路径，则加载配置
+        # Load config if config file path is specified
         if 'config_path' in noise_config:
             with open(noise_config['config_path'], 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
@@ -404,38 +378,38 @@ class NoisePredictorTrainer:
             ).to(self.device)
 
         num_params = sum(p.numel() for p in self.noise_predictor.parameters())
-        print(f"✓ 噪声预测器创建完成")
-        print(f"  - 参数量: {num_params / 1e6:.2f}M")
-        print(f"  - 梯度检查点: {self.config['training']['use_gradient_checkpointing']}")
+        print(f"✓ Noise predictor created")
+        print(f"  - Parameters: {num_params / 1e6:.2f}M")
+        print(f"  - Gradient checkpointing: {self.config['training']['use_gradient_checkpointing']}")
 
-        # 统计可训练参数
+        # Count trainable parameters
         total_params = sum(p.numel() for p in self.noise_predictor.parameters() if p.requires_grad)
-        print(f"\n总可训练参数: {total_params / 1e6:.2f}M")
+        print(f"\nTotal trainable parameters: {total_params / 1e6:.2f}M")
 
     def _init_losses(self):
-        """初始化损失函数"""
+        """Initialize loss functions"""
         print("\n" + "=" * 70)
-        print("初始化损失函数")
+        print("Initializing Loss Functions")
         print("=" * 70)
 
         loss_config = self.config['loss']
 
-        # L1损失（图像空间，不需要单独初始化，使用 F.l1_loss）
-        print(f"✓ L1损失 (权重: {loss_config.get('l1_weight', 1.0)})")
+        # L1 loss (image space, no separate initialization needed, use F.l1_loss)
+        print(f"✓ L1 loss (weight: {loss_config.get('l1_weight', 1.0)})")
 
-        # LPIPS感知损失
+        # LPIPS perceptual loss
         if loss_config.get('lpips_weight', 0) > 0:
             self.lpips_loss = LPIPSLoss(
                 loss_weight=1.0,
                 net_type=loss_config.get('lpips_net_type', 'alex')
             )
-            print(f"✓ LPIPS感知损失 (权重: {loss_config['lpips_weight']})")
+            print(f"✓ LPIPS perceptual loss (weight: {loss_config['lpips_weight']})")
         else:
             self.lpips_loss = None
 
-        # GAN损失
+        # GAN loss
         if loss_config.get('gan_weight', 0) > 0:
-            # 创建判别器
+            # Create discriminator
             self.discriminator = create_discriminator(
                 disc_type=loss_config.get('disc_type', 'patch'),
                 input_nc=3,
@@ -444,31 +418,31 @@ class NoisePredictorTrainer:
                 norm_type=loss_config.get('disc_norm_type', 'spectral')
             ).to(self.device)
 
-            # 创建GAN损失
+            # Create GAN loss
             self.gan_loss = GANLoss(
                 gan_type=loss_config.get('gan_type', 'lsgan'),
                 loss_weight=1.0
             )
 
-            # 统计判别器参数量
+            # Count discriminator parameters
             disc_params = sum(p.numel() for p in self.discriminator.parameters())
-            print(f"✓ GAN损失 (权重: {loss_config['gan_weight']})")
-            print(f"  - 判别器类型: {loss_config.get('disc_type', 'patch')}")
-            print(f"  - GAN类型: {loss_config.get('gan_type', 'lsgan')}")
-            print(f"  - 判别器参数量: {disc_params / 1e6:.2f}M")
+            print(f"✓ GAN loss (weight: {loss_config['gan_weight']})")
+            print(f"  - Discriminator type: {loss_config.get('disc_type', 'patch')}")
+            print(f"  - GAN type: {loss_config.get('gan_type', 'lsgan')}")
+            print(f"  - Discriminator parameters: {disc_params / 1e6:.2f}M")
         else:
             self.discriminator = None
             self.gan_loss = None
 
     def _init_optimizer(self):
-        """初始化优化器和学习率调度器"""
+        """Initialize optimizer and learning rate scheduler"""
         print("\n" + "=" * 70)
-        print("初始化优化器")
+        print("Initializing Optimizer")
         print("=" * 70)
 
         opt_config = self.config['optimizer']
 
-        # 优化器
+        # Optimizer
         if opt_config['type'] == 'Adam':
             self.optimizer = torch.optim.Adam(
                 self.noise_predictor.parameters(),
@@ -484,13 +458,13 @@ class NoisePredictorTrainer:
                 weight_decay=opt_config['weight_decay']
             )
         else:
-            raise ValueError(f"不支持的优化器类型: {opt_config['type']}")
+            raise ValueError(f"Unsupported optimizer type: {opt_config['type']}")
 
-        print(f"✓ 优化器: {opt_config['type']}")
-        print(f"  - 学习率: {opt_config['lr']}")
+        print(f"✓ Optimizer: {opt_config['type']}")
+        print(f"  - Learning rate: {opt_config['lr']}")
         print(f"  - Weight decay: {opt_config['weight_decay']}")
 
-        # 学习率调度器
+        # Learning rate scheduler
         scheduler_config = self.config['scheduler']
         if scheduler_config['type'] == 'CosineAnnealing':
             self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -508,9 +482,9 @@ class NoisePredictorTrainer:
             self.scheduler = None
 
         if self.scheduler:
-            print(f"✓ 学习率调度器: {scheduler_config['type']}")
+            print(f"✓ Learning rate scheduler: {scheduler_config['type']}")
 
-        # 判别器优化器（如果启用GAN损失）
+        # Discriminator optimizer (if GAN loss is enabled)
         loss_config = self.config['loss']
         if loss_config.get('gan_weight', 0) > 0 and self.discriminator is not None:
             disc_lr = loss_config.get('disc_lr', 1.0e-4)
@@ -520,24 +494,24 @@ class NoisePredictorTrainer:
                 betas=(opt_config['beta1'], opt_config['beta2']),
                 weight_decay=opt_config['weight_decay']
             )
-            print(f"✓ 判别器优化器: AdamW")
-            print(f"  - 学习率: {disc_lr}")
+            print(f"✓ Discriminator optimizer: AdamW")
+            print(f"  - Learning rate: {disc_lr}")
         else:
             self.optimizer_d = None
 
     def _init_dataloaders(self):
-        """初始化数据加载器"""
+        """Initialize dataloaders"""
         print("\n" + "=" * 70)
-        print("初始化数据加载器")
+        print("Initializing Dataloaders")
         print("=" * 70 + "\n")
 
         data_config = self.config['data']
         train_config = self.config['training']
 
-        # 训练数据加载器
+        # Training dataloader
         if self.config['degradation']['use_degradation']:
-            # 使用退化管道生成LR图像
-            print("使用退化管道生成LR图像...")
+            # Use degradation pipeline to generate LR images
+            print("Using degradation pipeline to generate LR images...")
             self.train_loader = create_train_dataloader(
                 data_dir=data_config['train']['hr_dir'],
                 config_path=self.config['degradation']['config_path'],
@@ -549,33 +523,33 @@ class NoisePredictorTrainer:
                 shuffle=True,
                 pin_memory=True
             )
-            print(f"✓ 训练数据加载器创建成功：{len(self.train_loader)} batches")
+            print(f"✓ Training dataloader created: {len(self.train_loader)} batches")
         else:
-            raise NotImplementedError("暂不支持直接加载LR-HR图像对")
+            raise NotImplementedError("Direct loading of LR-HR image pairs not yet supported")
 
 
     def _extract(self, a, t, x_shape):
-        """从a中提取t对应的值，并reshape到x_shape"""
+        """Extract values from a corresponding to t, and reshape to x_shape"""
         batch_size = t.shape[0]
         out = a.to(t.device)[t]
         return out.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
 
     def _scale_input(self, inputs, t):
         """
-        对输入进行归一化（ResShift的关键步骤！）
+        Normalize input (key step in ResShift!)
 
-        这是与ResShift原项目保持一致的输入归一化方法
+        This is the input normalization method consistent with the original ResShift project
 
         Args:
-            inputs: 输入tensor
-            t: 时间步索引
+            inputs: Input tensor
+            t: Timestep index
 
         Returns:
-            归一化后的输入
+            Normalized input
         """
         if self.normalize_input:
             if self.latent_flag:
-                # 潜在空间的方差约为1.0
+                # Latent space variance is approximately 1.0
                 std = torch.sqrt(self._extract(self.etas, t, inputs.shape) * self.kappa ** 2 + 1)
                 inputs_norm = inputs / std
             else:
@@ -587,25 +561,17 @@ class NoisePredictorTrainer:
 
     def q_posterior_mean_variance(self, x_0, x_t, t):
         """
-        计算ResShift的后验分布 q(x_{t-1} | x_t, x_0)
-
-        ResShift后验分布公式：
-        q(x_{t-1} | x_t, x_0) = N(x_{t-1}; μ̃_t, σ̃_t²·I)
-
-        其中：
-        μ̃_t = (η_{t-1}/η_t)·x_t + (α_t/η_t)·x_0
-        σ̃_t² = κ²·(η_{t-1}/η_t)·α_t
-        α_t = η_t - η_{t-1}
+        Calculate ResShift posterior distribution q(x_{t-1} | x_t, x_0)
 
         Args:
-            x_0: 预测的干净图像（ResShift UNet的输出）
-            x_t: 当前时间步的含噪图像
-            t: 时间步
+            x_0: Predicted clean image (ResShift UNet output)
+            x_t: Noisy image at current timestep
+            t: Timestep
 
         Returns:
-            mean: 后验均值
-            variance: 后验方差
-            log_variance: 后验对数方差
+            mean: Posterior mean
+            variance: Posterior variance
+            log_variance: Posterior log variance
         """
         # ResShift: μ = coef1·x_t + coef2·x_0
         # DDPM:     μ = coef1·x_0 + coef2·x_t
@@ -620,106 +586,95 @@ class NoisePredictorTrainer:
 
     def multi_step_training_loss(self, z_start, z_y, hr_image,lr_image):
         """
-        多步训练损失计算 - 与推理流程完全一致
-
-        多步训练流程：
-        1. 使用噪声预测器初始化 x_T = z_y + κ·√η_T·noise
-        2. 多步反向采样：for t in [T-1, T-2, ..., 0]:
-           - UNet 预测 x_0
-           - 噪声预测器预测噪声
-           - 后验采样得到 x_{t-1}
-        3. 计算最终的 x_0 与真实 z_start 的损失
-
-        这样训练与推理完全一致，避免训练-推理不一致的问题。
-
+        Multi-step training loss calculation
         Args:
-            z_start: HR图像的潜在表示 z_0 [B, C, H, W]
-            z_y: LR图像的潜在表示 y [B, C, H, W]
-            hr_image: 原始HR图像 [B, 3, H, W],用于图像空间损失计算
-            lr_image: 图像空间的LR图像（用作UNet的lq条件）
+            z_start: HR image latent representation z_0 [B, C, H, W]
+            z_y: LR image latent representation y [B, C, H, W]
+            hr_image: Original HR image [B, 3, H, W], for image space loss calculation
+            lr_image: Image-space LR image (used as UNet's lq condition)
 
         Returns:
-            loss: 总损失
-            loss_dict: 各项损失的字典
+            loss: Total loss
+            loss_dict: Dictionary of individual losses
         """
         loss_dict = {}
         batch_size = z_y.shape[0]
 
-        # 1. 初始化 x_T（使用噪声预测器）
-        # ResShift 公式：x_T = z_y + κ·√η_T·ε
+        # 1. Initialize x_T (using noise predictor)
+        # ResShift formula: x_T = z_y + κ·√η_T·ε
         t_init = self.num_timesteps - 1
         t_init_tensor = torch.full((batch_size,), t_init, device=self.device, dtype=torch.long)
 
-        # 初始化时使用随机高斯噪声（不使用噪声预测器）
+        # Use random Gaussian noise for initialization (not using noise predictor)
         sqrt_eta_T = self._extract(self.sqrt_etas, t_init_tensor, z_y.shape)
         predicted_noise_init = torch.randn_like(z_y)
         x_t = z_y + self.kappa * sqrt_eta_T * predicted_noise_init
 
-        # 2. 多步反向采样（与推理流程一致）
-        # 从 num_timesteps-1 到 0
+        # 2. Multi-step reverse sampling (consistent with inference process)
+        # From num_timesteps-1 to 0
         indices = list(range(self.num_timesteps))[::-1]  # [num_timesteps-1, ..., 0]
 
         for i in indices:
             t_tensor = torch.full((batch_size,), i, device=self.device, dtype=torch.long)
 
-            # 2.1 对输入进行归一化
+            # 2.1 Normalize input
             x_t_normalized = self._scale_input(x_t, t_tensor)
 
-            # 2.2 使用 UNet 预测 x_0（保留梯度，让梯度流回噪声预测器）
+            # 2.2 Use UNet to predict x_0 (keep gradients to let them flow back to noise predictor)
             pred_x0 = self.resshift_unet(x_t_normalized, t_tensor, lq=lr_image)
 
-            # 2.3 如果不是最后一步，进行后验采样
+            # 2.3 If not the last step, perform posterior sampling
             if i > 0:
-                # 计算后验分布 q(x_{t-1} | x_t, x_0)
+                # Calculate posterior distribution q(x_{t-1} | x_t, x_0)
                 mean, variance, log_variance = self.q_posterior_mean_variance(pred_x0, x_t, t_tensor)
 
-                # 使用噪声预测器预测噪声（需要梯度）
+                # Use noise predictor to predict noise (needs gradient)
                 predicted_noise = self.noise_predictor(x_t, pred_x0, lr_image, t_tensor, sample_posterior=True)
 
-                # 采样 x_{t-1}
-                # nonzero_mask 在这里总是 1，因为 i > 0
+                # Sample x_{t-1}
+                # nonzero_mask is always 1 here since i > 0
                 x_t = mean + torch.exp(0.5 * log_variance) * predicted_noise
 
-        # 最终的 pred_x0 就是我们的预测结果
+        # Final pred_x0 is our prediction result
         final_pred_x0 = pred_x0
 
-        # 4. 计算损失
+        # 4. Calculate losses
         loss_config = self.config['loss']
         total_loss = 0.0
 
-        # 解码到图像空间
-        # 注意：pred_image 需要保留梯度以便损失能够反向传播到噪声预测器
-        # VAE虽然是冻结的，但梯度仍然可以通过它传回到 final_pred_x0
-        pred_image = self.vae.decode(final_pred_x0)  # [-1, 1]，保留梯度
+        # Decode to image space
+        # Note: pred_image needs to keep gradients so loss can backprop to noise predictor
+        # VAE is frozen, but gradients can still flow through it back to final_pred_x0
+        pred_image = self.vae.decode(final_pred_x0)  # [-1, 1], keep gradients
         pred_image = torch.clamp(pred_image, -1, 1)
         pred_image = pred_image * 0.5 + 0.5  # [0, 1]
 
         gt_image = hr_image * 0.5 + 0.5  # [0, 1]
 
-        # L1 损失（图像空间）
+        # L1 loss (image space)
         l1_weight = loss_config.get('l1_weight', 1.0)
         l1_val = torch.nn.functional.l1_loss(pred_image, gt_image)
         loss_dict['l1'] = l1_val.item()
         total_loss += l1_weight * l1_val
 
-        # LPIPS 感知损失（图像空间）
+        # LPIPS perceptual loss (image space)
         if self.lpips_loss is not None and loss_config.get('lpips_weight', 0) > 0:
             lpips_val = self.lpips_loss(pred_image, gt_image)
             loss_dict['lpips'] = lpips_val.item()
             total_loss += loss_config['lpips_weight'] * lpips_val
 
-        # GAN 生成器损失（图像空间）
+        # GAN generator loss (image space)
         if self.gan_loss is not None and loss_config.get('gan_weight', 0) > 0:
-            # 检查是否达到判别器开始训练的epoch
+            # Check if reached discriminator start epoch
             disc_start_epoch = loss_config.get('disc_start_epoch', 0)
             if self.current_epoch >= disc_start_epoch:
-                # 计算生成器损失：让判别器认为生成图像是真的
+                # Calculate generator loss: make discriminator believe generated image is real
                 fake_pred = self.discriminator(pred_image)
                 g_loss = self.gan_loss(fake_pred, target_is_real=True, is_disc=False)
                 loss_dict['g_loss'] = g_loss.item()
                 total_loss += loss_config['gan_weight'] * g_loss
 
-        # 保存解码后的图像供判别器训练使用
+        # Save decoded image for discriminator training
         self._pred_image_for_disc = pred_image.detach()
         self._gt_image_for_disc = gt_image
 
@@ -729,17 +684,17 @@ class NoisePredictorTrainer:
 
     def train_epoch(self, epoch):
         """
-        训练一个epoch
+        Train one epoch
 
         Args:
-            epoch: 当前epoch数
+            epoch: Current epoch number
 
         Returns:
-            avg_loss_dict: 平均损失字典
+            avg_loss_dict: Average loss dictionary
         """
         self.noise_predictor.train()
 
-        # 记录当前epoch和epoch内的step，用于调试输出
+        # Record current epoch and step within epoch for debug output
         self.current_epoch = epoch
         self.epoch_step = 0
 
@@ -749,26 +704,26 @@ class NoisePredictorTrainer:
 
         for step, batch in enumerate(pbar):
             self.epoch_step = step
-            # 获取数据
+            # Get data
             hr_images = batch['gt'].to(self.device)  # [B, 3, H, W], [0, 1]
             lr_images = batch['lq'].to(self.device)  # [B, 3, H, W], [0, 1]
 
-            # 训练一步
+            # Train one step
             loss_dict = self.train_step(hr_images, lr_images)
 
-            # 累积损失
+            # Accumulate losses
             for key, value in loss_dict.items():
                 if key not in total_loss_dict:
                     total_loss_dict[key] = 0.0
                 total_loss_dict[key] += value
 
-            # 更新进度条
+            # Update progress bar
             pbar.set_postfix({
                 'loss': f"{loss_dict['total']:.4f}",
                 'lr': f"{self.optimizer.param_groups[0]['lr']:.2e}"
             })
 
-            # 打印日志
+            # Print log
             if (step + 1) % self.config['experiment']['log_interval'] == 0:
                 print(f"\nEpoch [{epoch}/{self.config['training']['num_epochs']}] "
                       f"Step [{step + 1}/{len(self.train_loader)}]")
@@ -778,59 +733,59 @@ class NoisePredictorTrainer:
 
             self.global_step += 1
 
-        # 计算平均损失
+        # Calculate average losses
         num_batches = len(self.train_loader)
         avg_loss_dict = {key: value / num_batches for key, value in total_loss_dict.items()}
 
         return avg_loss_dict
 
     def freeze_model(self, model):
-        """冻结模型参数"""
+        """Freeze model parameters"""
         for param in model.parameters():
             param.requires_grad = False
 
     def unfreeze_model(self, model):
-        """解冻模型参数"""
+        """Unfreeze model parameters"""
         for param in model.parameters():
             param.requires_grad = True
 
     def train_step(self, hr_images, lr_images):
         """
-        单步训练（类似 ResShift 和 InvSR），支持梯度累计
+        Single training step (similar to ResShift and InvSR), supports gradient accumulation
 
         Args:
-            hr_images: HR图像 [B, 3, H, W], 范围[0, 1]
-            lr_images: LR图像 [B, 3, H, W], 范围[0, 1]
+            hr_images: HR images [B, 3, H, W], range [0, 1]
+            lr_images: LR images [B, 3, H, W], range [0, 1]
 
         Returns:
-            loss_dict: 损失字典
+            loss_dict: Loss dictionary
         """
         self.noise_predictor.train()
         batch_size = hr_images.shape[0]
 
         loss_config = self.config['loss']
 
-        # 获取判别器更新频率（实现真正的交替训练）
+        # Get discriminator update frequency (for true alternating training)
         disc_update_freq = loss_config.get('disc_update_freq', 1)
         should_update_disc = (self.global_step % disc_update_freq == 0)
 
-        # 1. 编码到潜在空间（冻结的VAE）
+        # 1. Encode to latent space (frozen VAE)
         with torch.no_grad():
-            # 转换到[-1, 1]
+            # Convert to [-1, 1]
             hr_images_norm = hr_images * 2.0 - 1.0
             lr_images_norm = lr_images * 2.0 - 1.0
 
-            # HR图像直接编码
+            # HR image direct encoding
             z_start = self.vae.encode(hr_images_norm)
 
-            # LR图像需要先上采样到与HR相同尺寸，再编码
+            # LR image needs to be upsampled to HR size first, then encoded
             scale_factor = self.config['data']['train']['scale']
             lr_images_upsampled = torch.nn.functional.interpolate(
                 lr_images_norm, scale_factor=scale_factor, mode='bicubic', align_corners=False
             )
             z_y = self.vae.encode(lr_images_upsampled)
 
-        # 2. 先计算生成器损失（总是需要计算，为判别器提供假图像）
+        # 2. First calculate generator loss (always needed, to provide fake images for discriminator)
         if self.config['training']['use_amp']:
             with autocast(device_type='cuda'):
                 loss, loss_dict = self.multi_step_training_loss(
@@ -841,30 +796,30 @@ class NoisePredictorTrainer:
                 z_start, z_y, hr_images_norm,lr_images_norm
             )
 
-        # 3. 真正的交替训练逻辑
+        # 3. True alternating training logic
         if should_update_disc and self.discriminator is not None and loss_config.get('gan_weight', 0) > 0:
-            # === 这个step只更新判别器 ===
+            # === This step only updates discriminator ===
             disc_start_epoch = loss_config.get('disc_start_epoch', 0)
             if self.current_epoch >= disc_start_epoch:
-                # 获取生成器产生的图像（已在multi_step_training_loss中保存）
+                # Get generator produced images (already saved in multi_step_training_loss)
                 if hasattr(self, '_pred_image_for_disc') and hasattr(self, '_gt_image_for_disc'):
                     fake_image = self._pred_image_for_disc
                     real_image = self._gt_image_for_disc
 
                     self.discriminator.train()
 
-                    # 冻结生成器，解冻判别器
+                    # Freeze generator, unfreeze discriminator
                     self.freeze_model(self.noise_predictor)
                     self.unfreeze_model(self.discriminator)
 
-                    # 计算判别器损失
+                    # Calculate discriminator loss
                     if self.config['training']['use_amp']:
                         with autocast(device_type='cuda'):
-                            # 判别真实图像
+                            # Discriminate real images
                             real_pred = self.discriminator(real_image)
                             d_loss_real = self.gan_loss(real_pred, target_is_real=True, is_disc=True)
 
-                            # 判别生成图像
+                            # Discriminate generated images
                             fake_pred = self.discriminator(fake_image)
                             d_loss_fake = self.gan_loss(fake_pred, target_is_real=False, is_disc=True)
 
@@ -872,7 +827,7 @@ class NoisePredictorTrainer:
 
                         self.scaler_d.scale(d_loss).backward()
 
-                        # 梯度裁剪
+                        # Gradient clipping
                         if self.config['training']['gradient_clip'] > 0:
                             self.scaler_d.unscale_(self.optimizer_d)
                             torch.nn.utils.clip_grad_norm_(
@@ -883,11 +838,11 @@ class NoisePredictorTrainer:
                         self.scaler_d.update()
                         self.optimizer_d.zero_grad()
                     else:
-                        # 判别真实图像
+                        # Discriminate real images
                         real_pred = self.discriminator(real_image)
                         d_loss_real = self.gan_loss(real_pred, target_is_real=True, is_disc=True)
 
-                        # 判别生成图像
+                        # Discriminate generated images
                         fake_pred = self.discriminator(fake_image)
                         d_loss_fake = self.gan_loss(fake_pred, target_is_real=False, is_disc=True)
 
@@ -895,7 +850,7 @@ class NoisePredictorTrainer:
 
                         d_loss.backward()
 
-                        # 梯度裁剪
+                        # Gradient clipping
                         if self.config['training']['gradient_clip'] > 0:
                             torch.nn.utils.clip_grad_norm_(
                                 self.discriminator.parameters(),
@@ -904,26 +859,26 @@ class NoisePredictorTrainer:
                         self.optimizer_d.step()
                         self.optimizer_d.zero_grad()
 
-                    # 记录损失
+                    # Record losses
                     loss_dict['d_loss'] = d_loss.item()
                     loss_dict['d_loss_real'] = d_loss_real.item()
                     loss_dict['d_loss_fake'] = d_loss_fake.item()
 
-                # 恢复生成器参数状态
+                # Restore generator parameter state
                 self.unfreeze_model(self.noise_predictor)
         else:
-            # === 这个step只更新生成器 ===
+            # === This step only updates generator ===
 
-            # 冻结判别器，解冻生成器
+            # Freeze discriminator, unfreeze generator
             if self.discriminator is not None:
                 self.freeze_model(self.discriminator)
             self.unfreeze_model(self.noise_predictor)
 
-            # 反向传播生成器损失
+            # Backpropagate generator loss
             if self.config['training']['use_amp']:
                 self.scaler_g.scale(loss).backward()
 
-                # 梯度裁剪
+                # Gradient clipping
                 if self.config['training']['gradient_clip'] > 0:
                     self.scaler_g.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(
@@ -937,7 +892,7 @@ class NoisePredictorTrainer:
             else:
                 loss.backward()
 
-                # 梯度裁剪
+                # Gradient clipping
                 if self.config['training']['gradient_clip'] > 0:
                     torch.nn.utils.clip_grad_norm_(
                         self.noise_predictor.parameters(),
@@ -947,14 +902,14 @@ class NoisePredictorTrainer:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
 
-            # 恢复判别器参数状态
+            # Restore discriminator parameter state
             if self.discriminator is not None:
                 self.unfreeze_model(self.discriminator)
 
         return loss_dict
 
     def save_checkpoint(self, epoch, is_best=False):
-        """保存checkpoint"""
+        """Save checkpoint"""
         checkpoint = {
             'epoch': epoch,
             'global_step': self.global_step,
@@ -965,27 +920,27 @@ class NoisePredictorTrainer:
             'config': self.config,
         }
 
-        # 保存判别器状态（如果启用GAN损失）
+        # Save discriminator state (if GAN loss is enabled)
         if self.discriminator is not None:
             checkpoint['discriminator'] = self.discriminator.state_dict()
         if self.optimizer_d is not None:
             checkpoint['optimizer_d'] = self.optimizer_d.state_dict()
 
-        # 保存最新的checkpoint（包含完整训练状态）
+        # Save latest checkpoint (includes complete training state)
         ckpt_path = self.exp_dir / 'checkpoints' / f'checkpoint_epoch_{epoch}.pth'
         torch.save(checkpoint, ckpt_path)
-        print(f"✓ Checkpoint已保存: {ckpt_path}")
+        print(f"✓ Checkpoint saved: {ckpt_path}")
 
-        # 保存最佳模型（只保存噪声预测器权重）
+        # Save best model (only noise predictor weights)
         if is_best:
             best_path = self.exp_dir / 'checkpoints' / 'noise_predictor.pth'
-            # 只保存噪声预测器的state_dict，方便推理时直接加载
+            # Only save noise predictor state_dict for easy loading during inference
             torch.save(self.noise_predictor.state_dict(), best_path)
-            print(f"✓ 最佳模型已保存（仅噪声预测器权重）: {best_path}")
+            print(f"✓ Best model saved (noise predictor weights only): {best_path}")
 
-        # 删除旧的checkpoint（保留最近N个）
+        # Delete old checkpoints (keep most recent N)
         keep_recent = self.config['experiment'].get('keep_recent_checkpoints', 5)
-        # 按epoch数字排序，而不是按字母顺序
+        # Sort by epoch number, not alphabetically
         checkpoints = sorted(
             (self.exp_dir / 'checkpoints').glob('checkpoint_epoch_*.pth'),
             key=lambda x: int(x.stem.split('_')[-1])
@@ -993,10 +948,10 @@ class NoisePredictorTrainer:
         if len(checkpoints) > keep_recent:
             for old_ckpt in checkpoints[:-keep_recent]:
                 old_ckpt.unlink()
-                print(f"✓ 删除旧checkpoint: {old_ckpt.name}")
+                print(f"✓ Deleted old checkpoint: {old_ckpt.name}")
 
     def load_checkpoint(self, checkpoint_path):
-        """加载checkpoint"""
+        """Load checkpoint"""
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
         self.noise_predictor.load_state_dict(checkpoint['noise_predictor'])
@@ -1008,15 +963,15 @@ class NoisePredictorTrainer:
         self.global_step = checkpoint['global_step']
         self.best_loss = checkpoint['best_loss']
 
-        # 加载判别器状态（如果存在）
+        # Load discriminator state (if exists)
         if self.discriminator is not None and 'discriminator' in checkpoint:
             self.discriminator.load_state_dict(checkpoint['discriminator'])
-            print(f"  - 已加载判别器权重")
+            print(f"  - Discriminator weights loaded")
         if self.optimizer_d is not None and 'optimizer_d' in checkpoint:
             self.optimizer_d.load_state_dict(checkpoint['optimizer_d'])
-            print(f"  - 已加载判别器优化器状态")
+            print(f"  - Discriminator optimizer state loaded")
 
-        print(f"✓ Checkpoint已加载: {checkpoint_path}")
+        print(f"✓ Checkpoint loaded: {checkpoint_path}")
         print(f"  - Epoch: {self.current_epoch}")
         print(f"  - Global step: {self.global_step}")
         print(f"  - Best loss: {self.best_loss:.6f}")
@@ -1024,29 +979,29 @@ class NoisePredictorTrainer:
         return checkpoint
 
 def main():
-    parser = argparse.ArgumentParser(description='训练噪声预测器（单步训练）')
-    parser.add_argument('--config', type=str, required=True, help='配置文件路径')
-    parser.add_argument('--resume', type=str, default=None, help='恢复训练的checkpoint路径')
+    parser = argparse.ArgumentParser(description='Train noise predictor (single-step training)')
+    parser.add_argument('--config', type=str, required=True, help='Config file path')
+    parser.add_argument('--resume', type=str, default=None, help='Checkpoint path to resume training')
     args = parser.parse_args()
 
-    # 创建训练器
+    # Create trainer
     trainer = NoisePredictorTrainer(args.config)
 
-    # 恢复训练
+    # Resume training
     start_epoch = 1
     if args.resume:
         checkpoint = trainer.load_checkpoint(args.resume)
         if checkpoint is not None:
             start_epoch = checkpoint.get('epoch', 0) + 1
-            print(f"\n从epoch {start_epoch}恢复训练")
+            print(f"\nResuming training from epoch {start_epoch}")
         else:
-            print("\n警告: 无法加载checkpoint，从头开始训练")
+            print("\nWarning: Could not load checkpoint, starting from scratch")
 
     print("\n" + "=" * 70)
-    print("开始训练！")
+    print("Starting training!")
     print("=" * 70 + "\n")
 
-    # 训练循环
+    # Training loop
     num_epochs = trainer.config['training']['num_epochs']
 
     try:
@@ -1055,20 +1010,20 @@ def main():
             print(f"Epoch {epoch}/{num_epochs}")
             print(f"{'=' * 70}\n")
 
-            # 训练一个epoch
+            # Train one epoch
             avg_loss_dict = trainer.train_epoch(epoch)
 
-            # 打印平均损失
-            print(f"\nEpoch {epoch} 平均损失:")
+            # Print average losses
+            print(f"\nEpoch {epoch} average loss:")
             for key, value in avg_loss_dict.items():
                 print(f"  {key}: {value:.4f}")
 
-            # 更新学习率
+            # Update learning rate
             if trainer.scheduler is not None:
                 trainer.scheduler.step()
-                print(f"\n当前学习率: {trainer.optimizer.param_groups[0]['lr']:.2e}")
+                print(f"\nCurrent learning rate: {trainer.optimizer.param_groups[0]['lr']:.2e}")
 
-            # 保存checkpoint
+            # Save checkpoint
             if epoch % trainer.config['experiment']['save_interval'] == 0:
                 is_best = avg_loss_dict['total'] < trainer.best_loss
                 if is_best:
@@ -1076,14 +1031,14 @@ def main():
                 trainer.save_checkpoint(epoch, is_best=is_best)
 
         print("\n" + "=" * 70)
-        print("训练完成！")
+        print("Training completed!")
         print("=" * 70)
 
     except KeyboardInterrupt:
-        print("\n\n训练被中断！")
-        print("保存当前checkpoint...")
+        print("\n\nTraining interrupted!")
+        print("Saving current checkpoint...")
         trainer.save_checkpoint(epoch, is_best=False)
-        print("Checkpoint已保存，可以使用--resume恢复训练")
+        print("Checkpoint saved, can resume training with --resume")
 
 
 if __name__ == '__main__':

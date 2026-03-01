@@ -88,75 +88,12 @@ def process_image(input_image, num_steps, color_correction, use_swinir, use_nois
     return str(output_path), str(output_path)
 
 
-def process_batch(input_dir, output_dir, num_steps, color_correction, use_swinir, use_noise_predictor, seed):
-    """Process a batch of images"""
-    global inference_engine
-
-    # Initialize if needed
-    if inference_engine is None:
-        initialize_inference(num_steps=num_steps, color_correction=color_correction)
-
-    # Update settings
-    inference_engine.num_steps = num_steps
-    inference_engine.color_correction = color_correction
-    inference_engine.use_swinir = use_swinir
-    inference_engine.use_noise_predictor = use_noise_predictor
-
-    # Convert seed to int
-    try:
-        seed = int(seed)
-    except:
-        seed = 12345
-
-    # Set seed
-    import torch
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-
-    # Get input path
-    input_path = Path(input_dir)
-    output_path = Path(output_dir)
-
-    # Create output directory
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Get image files
-    image_files = []
-    for ext in ['*.png', '*.jpg', '*.jpeg', '*.bmp', '*.PNG', '*.JPG', '*.JPEG']:
-        image_files.extend(input_path.glob(ext))
-
-    total_files = len(image_files)
-
-    if total_files == 0:
-        return f"No image files found in {input_dir}"
-
-    # Process each image
-    for idx, img_path in enumerate(image_files):
-        # Read image
-        import cv2
-        lr_image = cv2.imread(str(img_path))
-        lr_image = cv2.cvtColor(lr_image, cv2.COLOR_BGR2RGB)
-        lr_image = lr_image.astype(np.float32) / 255.0
-
-        # Process
-        sr_image = inference_engine.process_single_image(lr_image)
-
-        # Save result
-        sr_image = (sr_image * 255.0).astype(np.uint8)
-        sr_image = cv2.cvtColor(sr_image, cv2.COLOR_RGB2BGR)
-
-        output_file = output_path / f"{img_path.stem}_sr.png"
-        cv2.imwrite(str(output_file), sr_image)
-
-    return f"✓ Processed {total_files} images. Results saved in {output_path}"
-
-
 # Title and descriptions
-title = "LPNSR: Image Super-resolution via Latent Proximal Noise Sampling"
+title = "LPNSR: Prior-Enhanced Diffusion Image Super-Resolution via LR-Guided Noise Prediction"
 
 description = r"""
-<b>Official Gradio Demo</b> for <b>LPNSR</b> (Latent Proximal Noise Sampling for Image Super-resolution).<br>
-🔥 LPNSR achieves state-of-the-art image super-resolution results with advanced noise prediction and SwinIR-based super-resolution.<br>
+<b>Official Gradio Demo</b> for <b>LPNSR</b> (Prior-Enhanced Diffusion Image Super-Resolution via LR-Guided Noise Prediction).<br>
+🔥 LPNSR achieves state-of-the-art image super-resolution results with advanced noise prediction and Pre-Upsampling methods.<br>
 """
 
 article = r"""
@@ -165,14 +102,12 @@ article = r"""
 - Advanced noise prediction for better detail reconstruction
 - SwinIR-based super-resolution for high-quality baseline
 - Color correction for natural-looking results
-- Batch processing support
 
 💡 **Tips**
 - Upload a low-resolution image to see the super-resolution result
 - Adjust the number of steps (1-4) for quality vs. speed trade-off
 - Enable SwinIR for better baseline quality
 - Enable color correction for natural colors
-- Use batch processing to process multiple images at once
 
 ⚡ **Performance**
 - Recommended: 4 steps for best quality
@@ -230,51 +165,6 @@ with gr.Blocks() as demo:
                 fn=process_image,
                 inputs=[input_image, num_steps, color_correction, use_swinir, use_noise_predictor, seed],
                 outputs=[output_image, output_file]
-            )
-
-        # Batch Processing Tab
-        with gr.Tab("Batch Processing"):
-            with gr.Column():
-                input_dir = gr.Textbox(
-                    label="Input Directory Path",
-                    placeholder="e.g., /path/to/input/images"
-                )
-                output_dir = gr.Textbox(
-                    label="Output Directory Path",
-                    placeholder="e.g., /path/to/output/images",
-                    value="./batch_results"
-                )
-                batch_num_steps = gr.Dropdown(
-                    choices=[1, 2, 3, 4],
-                    value=4,
-                    label="Number of Steps"
-                )
-                batch_color_correction = gr.Checkbox(
-                    value=True,
-                    label="Enable Color Correction"
-                )
-                batch_use_swinir = gr.Checkbox(
-                    value=True,
-                    label="Enable SwinIR Super-resolution"
-                )
-                batch_use_noise_predictor = gr.Checkbox(
-                    value=True,
-                    label="Enable Noise Predictor"
-                )
-                batch_seed = gr.Number(
-                    value=12345,
-                    label="Random Seed"
-                )
-                batch_btn = gr.Button("Process Folder", variant="primary")
-                batch_status = gr.Textbox(
-                    label="Processing Status",
-                    interactive=False
-                )
-
-            batch_btn.click(
-                fn=process_batch,
-                inputs=[input_dir, output_dir, batch_num_steps, batch_color_correction, batch_use_swinir, batch_use_noise_predictor, batch_seed],
-                outputs=batch_status
             )
 
     gr.Markdown(article)
