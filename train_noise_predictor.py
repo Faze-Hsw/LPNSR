@@ -26,6 +26,8 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
+from copy import deepcopy
+from collections import OrderedDict
 
 matplotlib.use('Agg')  # Use non-interactive backend, suitable for server environments
 
@@ -139,11 +141,54 @@ class NoisePredictorTrainer:
         # Training state
         self.current_epoch = 0
         self.global_step = 0
-        self.best_loss = float('inf')
+
+        # Initialize EMA (Exponential Moving Average)
+        self._init_ema()
 
         print(f"Trainer initialized!")
         print(f"Experiment directory: {self.exp_dir}")
         print(f"Device: {self.device}")
+
+    def _init_ema(self):
+        """Initialize EMA (Exponential Moving Average) for noise predictor"""
+        ema_rate = self.config['training'].get('ema_rate', 0.999)
+        
+        if ema_rate > 0:
+            self.ema_rate = ema_rate
+            # Initialize EMA state from current model weights
+            self.ema_state = OrderedDict(
+                {key: deepcopy(value.data) for key, value in self.noise_predictor.state_dict().items()}
+            )
+            # Keys to ignore during EMA update (batch norm running stats, etc.)
+            self.ema_ignore_keys = [
+                key for key in self.ema_state.keys() 
+                if 'running_' in key or 'num_batches_tracked' in key
+            ]
+            print(f"✓ EMA initialized with rate: {self.ema_rate}")
+        else:
+            self.ema_rate = None
+            self.ema_state = None
+            self.ema_ignore_keys = None
+
+    @torch.no_grad()
+    def update_ema(self):
+        """Update EMA weights after each training step"""
+        if self.ema_rate is None:
+            return
+        
+        source_state = self.noise_predictor.state_dict()
+        for key, value in self.ema_state.items():
+            if key in self.ema_ignore_keys:
+                # Copy running stats directly (no EMA for these)
+                self.ema_state[key] = source_state[key]
+            elif not self.ema_state[key].is_floating_point():
+                # Skip EMA for non-floating point tensors (e.g., int64 counters)
+                self.ema_state[key] = source_state[key]
+            else:
+                # EMA update: ema = rate * ema + (1 - rate) * current
+                self.ema_state[key].mul_(self.ema_rate).add_(
+                    source_state[key].detach().data, alpha=1 - self.ema_rate
+                )
 
     def _init_models(self):
         """Initialize models"""
@@ -902,66 +947,93 @@ class NoisePredictorTrainer:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
 
+            # Update EMA after generator update
+            self.update_ema()
+
             # Restore discriminator parameter state
             if self.discriminator is not None:
                 self.unfreeze_model(self.discriminator)
 
         return loss_dict
 
-    def save_checkpoint(self, epoch, is_best=False):
-        """Save checkpoint"""
-        checkpoint = {
+    def save_checkpoint(self, epoch):
+        """Save EMA weights only (no best loss tracking)"""
+        # Use EMA weights if available, otherwise use regular weights
+        model_weights = self.ema_state if self.ema_state is not None else self.noise_predictor.state_dict()
+        
+        # Save EMA weights directly (for inference)
+        ckpt_path = self.exp_dir / 'checkpoints' / f'noise_predictor_epoch{epoch}.pth'
+        torch.save(model_weights, ckpt_path)
+        print(f"✓ EMA weights saved: {ckpt_path}")
+        
+        # Also save training state checkpoint (for resuming training)
+        training_ckpt = {
             'epoch': epoch,
             'global_step': self.global_step,
-            'noise_predictor': self.noise_predictor.state_dict(),
+            'noise_predictor': self.noise_predictor.state_dict(),  # Current weights (not EMA)
+            'ema_state': self.ema_state,  # EMA state
             'optimizer': self.optimizer.state_dict(),
             'scheduler': self.scheduler.state_dict() if self.scheduler else None,
-            'best_loss': self.best_loss,
             'config': self.config,
         }
 
+        # Save EMA rate for reference
+        if self.ema_rate is not None:
+            training_ckpt['ema_rate'] = self.ema_rate
+
         # Save discriminator state (if GAN loss is enabled)
         if self.discriminator is not None:
-            checkpoint['discriminator'] = self.discriminator.state_dict()
+            training_ckpt['discriminator'] = self.discriminator.state_dict()
         if self.optimizer_d is not None:
-            checkpoint['optimizer_d'] = self.optimizer_d.state_dict()
+            training_ckpt['optimizer_d'] = self.optimizer_d.state_dict()
 
-        # Save latest checkpoint (includes complete training state)
-        ckpt_path = self.exp_dir / 'checkpoints' / f'checkpoint_epoch_{epoch}.pth'
-        torch.save(checkpoint, ckpt_path)
-        print(f"✓ Checkpoint saved: {ckpt_path}")
-
-        # Save best model (only noise predictor weights)
-        if is_best:
-            best_path = self.exp_dir / 'checkpoints' / 'noise_predictor.pth'
-            # Only save noise predictor state_dict for easy loading during inference
-            torch.save(self.noise_predictor.state_dict(), best_path)
-            print(f"✓ Best model saved (noise predictor weights only): {best_path}")
+        training_ckpt_path = self.exp_dir / 'checkpoints' / 'checkpoint' / f'checkpoint_epoch{epoch}.pth'
+        training_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(training_ckpt, training_ckpt_path)
+        print(f"✓ Training checkpoint saved: {training_ckpt_path}")
 
         # Delete old checkpoints (keep most recent N)
         keep_recent = self.config['experiment'].get('keep_recent_checkpoints', 5)
-        # Sort by epoch number, not alphabetically
-        checkpoints = sorted(
-            (self.exp_dir / 'checkpoints').glob('checkpoint_epoch_*.pth'),
-            key=lambda x: int(x.stem.split('_')[-1])
+        # Sort by epoch number
+        ema_ckpts = sorted(
+            (self.exp_dir / 'checkpoints').glob('noise_predictor_epoch*.pth'),
+            key=lambda x: int(x.stem.replace('noise_predictor_epoch', ''))
         )
-        if len(checkpoints) > keep_recent:
-            for old_ckpt in checkpoints[:-keep_recent]:
+        training_ckpts = sorted(
+            (self.exp_dir / 'checkpoints' / 'checkpoint').glob('checkpoint_epoch*.pth'),
+            key=lambda x: int(x.stem.replace('checkpoint_epoch', ''))
+        )
+        
+        # Delete old training checkpoints
+        if len(training_ckpts) > keep_recent:
+            for old_ckpt in training_ckpts[:-keep_recent]:
                 old_ckpt.unlink()
                 print(f"✓ Deleted old checkpoint: {old_ckpt.name}")
 
     def load_checkpoint(self, checkpoint_path):
-        """Load checkpoint"""
+        """Load checkpoint (training state for resuming)"""
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
+        # Load model weights
         self.noise_predictor.load_state_dict(checkpoint['noise_predictor'])
+        
+        # Load EMA state if exists
+        if 'ema_state' in checkpoint and checkpoint['ema_state'] is not None:
+            self.ema_state = checkpoint['ema_state']
+            print(f"  - EMA state loaded")
+        elif self.ema_rate is not None:
+            # Initialize EMA state from loaded weights
+            self.ema_state = OrderedDict(
+                {key: deepcopy(value.data) for key, value in checkpoint['noise_predictor'].items()}
+            )
+            print(f"  - EMA state initialized from checkpoint weights")
+
         self.optimizer.load_state_dict(checkpoint['optimizer'])
-        if self.scheduler and checkpoint['scheduler']:
+        if self.scheduler and checkpoint.get('scheduler'):
             self.scheduler.load_state_dict(checkpoint['scheduler'])
 
         self.current_epoch = checkpoint['epoch']
         self.global_step = checkpoint['global_step']
-        self.best_loss = checkpoint['best_loss']
 
         # Load discriminator state (if exists)
         if self.discriminator is not None and 'discriminator' in checkpoint:
@@ -974,7 +1046,6 @@ class NoisePredictorTrainer:
         print(f"✓ Checkpoint loaded: {checkpoint_path}")
         print(f"  - Epoch: {self.current_epoch}")
         print(f"  - Global step: {self.global_step}")
-        print(f"  - Best loss: {self.best_loss:.6f}")
 
         return checkpoint
 
@@ -1025,10 +1096,7 @@ def main():
 
             # Save checkpoint
             if epoch % trainer.config['experiment']['save_interval'] == 0:
-                is_best = avg_loss_dict['total'] < trainer.best_loss
-                if is_best:
-                    trainer.best_loss = avg_loss_dict['total']
-                trainer.save_checkpoint(epoch, is_best=is_best)
+                trainer.save_checkpoint(epoch)
 
         print("\n" + "=" * 70)
         print("Training completed!")
@@ -1037,7 +1105,7 @@ def main():
     except KeyboardInterrupt:
         print("\n\nTraining interrupted!")
         print("Saving current checkpoint...")
-        trainer.save_checkpoint(epoch, is_best=False)
+        trainer.save_checkpoint(epoch)
         print("Checkpoint saved, can resume training with --resume")
 
 
