@@ -4,7 +4,18 @@ A diffusion-based image super-resolution method that learns to predict optimal n
 
 ---
 
-> This project presents a novel approach to image super-resolution by training a noise predictor that estimates optimal noise maps for the diffusion process. The noise predictor enables initializing the sampling process at an intermediate state, significantly reducing the number of required sampling steps while maintaining high-quality results.
+> Diffusion-based image super-resolution (SR) suffers from a critical trade-off between inference efﬁ-
+ciency and reconstruction quality, especially in few-step sampling for practical deployment. While
+the residual-shifting diffusion framework ResShift achieves efﬁcient 4-step SR inference, it suffers
+from severe performance degradation due to unconstrained random noise in intermediate steps and
+naive initialization, leading to error accumulation and weak LR prior guidance. In this paper, we
+propose LPNSR, a prior-enhanced efﬁcient diffusion SR framework. We ﬁrst design an LR-guided
+multi-input-aware noise predictor to replace random Gaussian noise, embedding structural priors
+into the reverse process while fully preserving the efﬁcient residual-shifting mechanism. We fur-
+ther optimize the diffusion initialization with a high-quality pre-upsampling network to mitigate
+initial bias. With a compact 4-step trajectory, LPNSR can be optimized end-to-end. Extensive ex-
+periments show that LPNSR achieves state-of-the-art perceptual performance on both synthetic and
+real-world datasets without any text-to-image priors.
 
 ---
 
@@ -17,16 +28,27 @@ A diffusion-based image super-resolution method that learns to predict optimal n
 
 ## Visual Results
 
-<div align="center">
+<div align="left">
   <b>4× Real-world Super-Resolution</b>
   <br><br>
-
-  [![Demo 1](https://imgsli.com/i/YOUR_IMAGE_ID.jpg)](https://imgsli.com/YOUR_LINK_1)
-  &nbsp;&nbsp;
-  [![Demo 2](https://imgsli.com/i/YOUR_IMAGE_ID.jpg)](https://imgsli.com/YOUR_LINK_2)
-  &nbsp;&nbsp;
-  [![Demo 3](https://imgsli.com/i/YOUR_IMAGE_ID.jpg)](https://imgsli.com/YOUR_LINK_3)
-
+  <table>
+    <tr>
+      <th>LQ Image</th>
+      <th>SR Image</th>
+    </tr>
+    <tr>
+      <td><img src="testdata/RealSet80/oldphoto6.png" width="300"></td>
+      <td><img src="results/oldphoto6_sr.png" width="300"></td>
+    </tr>
+    <tr>
+      <td><img src="testdata/RealSet80/Lincoln.png" width="300"></td>
+      <td><img src="results/Lincoln_sr.png" width="300"></td>
+    </tr>
+    <tr>
+      <td><img src="testdata/RealSet80/0003.jpg" width="300"></td>
+      <td><img src="LPNSR/results/0003_sr.png" width="300"></td>
+    </tr>
+  </table>
 </div>
 
 ## Requirements
@@ -35,15 +57,15 @@ A diffusion-based image super-resolution method that learns to predict optimal n
 - A suitable conda environment named `lpnsr` can be created and activated with:
 
 ```bash
-conda create -n lpnsr python=3.10
+conda create -n lpnsr python=3.10.11
 conda activate lpnsr
 
 # Install PyTorch with CUDA support 
-#CUDA 13.0
-pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu130
+#CUDA 12.8
+pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
 
 # Install other dependencies
-pip install -r requirements.txt
+pip install -r LPNSR/requirements.txt
 
 # Install xformers for acceleration
 pip install xformers==0.0.33.post2
@@ -51,7 +73,7 @@ pip install xformers==0.0.33.post2
 
 ## Pre-trained Models
 
-Download all pre-trained models from [腾讯微云](https://share.weiyun.com/wbhPDZKw) and place them in the `pretrained/` folder:
+Download all pre-trained models from [腾讯微云](https://share.weiyun.com/2P35qGWJ) (the password is 'qdhijm'),and place them in the `pretrained/` folder:
 
 | Model | Description |
 |-------|-------------|
@@ -61,6 +83,14 @@ Download all pre-trained models from [腾讯微云](https://share.weiyun.com/wbh
 | `003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth` | SwinIR for refinement |
 
 ## Quick Start
+
+### :railway_car: Online Demo
+
+Launch the Gradio demo:
+```bash
+python LPNSR/app.py
+```
+Then open `http://127.0.0.1:7860` in your browser.
 
 ### :rocket: Inference
 
@@ -74,20 +104,13 @@ python LPNSR/inference.py -i [image folder/image path] -o [output folder]
 python LPNSR/test.py --lq [lq image folder] --gt [gt image folder]
 ```
 
-### :railway_car: Online Demo
-
-Launch the Gradio demo:
-```bash
-python LPNSR/app.py
-```
-
-Then open `http://127.0.0.1:7860` in your browser.
+**Note:** If only LQ images are provided (without GT reference images), only no-reference metrics will be computed.
 
 ## Training
 
 ### :turtle: Preparing Stage
 
-1. Prepare training data in `traindata/` folder (high-resolution images)
+1. Create a folder named `traindata/` and put your training data in the `traindata/` folder (high-resolution images)
 2. Download the pre-trained models (see above)
 3. Adjust the configuration in `configs/train_noise_predictor.yaml`
 
@@ -103,28 +126,21 @@ python LPNSR/train_noise_predictor.py --config LPNSR/configs/train_noise_predict
 python train_noise_predictor.py --config LPNSRconfigs/train_noise_predictor.yaml --resume LPNSR/experiments/noise_predictor/checkpoints/check_point_xx.pth
 ```
 
-## Method Details
+## Reproducing the results in our paper
+### :red_car: Prepare data
+Download datasets used in our paper [腾讯微云](https://share.weiyun.com/2P35qGWJ) (the password is 'qdhijm'),and place them in the `testdata/` folder
 
-### Architecture
-
-The method consists of three main components:
-
-1. **VQGAN Encoder/Decoder**: 4x spatial compression for efficient latent space processing
-2. **Noise Predictor**: Predicts optimal noise maps for partial diffusion initialization
-3. **ResShift UNet**: Diffusion model for latent space super-resolution
-
-### Diffusion Process
-
-- **Forward Process**: Adds residual between HR and LR to construct intermediate states
-- **Noise Schedule**: Exponential schedule with flexible control
-- **Sampling**: Starts from predicted intermediate state, reducing required steps
+### :rocket: Begin Testing
+```bash
+python LPNSR/test.py --lq [lq image folder] --gt [gt image folder]
+```
 
 ## Acknowledgement
 
 This project is based on:
 - [ResShift](https://github.com/zsyOAOA/ResShift) - Efficient diffusion model for image SR
 - [BasicSR](https://github.com/XPixelGroup/BasicSR) - Basic super-resolution toolbox
-- [SwinIR](https://github.com/JingyunLiang/SwinIR) - Swin Transformer for image restoration
+- [SwinIR](https://github.com/JingyunLiang/SwinIR) - Swin Transformer for image super-resolution
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) - Degradation simulation
 
 ## License
@@ -133,4 +149,4 @@ This project is licensed under the MIT License.
 
 ## Contact
 
-If you have any questions, please feel free to open an issue or contact the maintainer.
+If you have any questions, please feel free to open an issue or contact the maintainer via `frozen2001@qq.com`.
