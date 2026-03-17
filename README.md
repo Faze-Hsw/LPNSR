@@ -53,8 +53,7 @@ real-world datasets without any text-to-image priors.
 
 ## Requirements
 
-- Python 3.10, PyTorch 2.9.1+cu130, Xformers 0.0.33.post2
-- OpenCV is installed via the headless wheel from [requirements.txt](requirements.txt) to avoid Linux GUI library issues such as `libGL.so.1`.
+- Python 3.10.11, PyTorch 2.9.1+cu128, Xformers 0.0.33.post2
 - A suitable conda environment named `lpnsr` can be created and activated with:
 
 ```bash
@@ -79,7 +78,7 @@ pip install xformers==0.0.33.post2
 
 ## Pre-trained Models
 
-Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpri/LPNSR) (the password is 'qdhijm'),and place them in the `pretrained/` folder:
+Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpri/LPNSR) or [腾讯微云](https://share.weiyun.com/2P35qGWJ) (password: `qdhijm`), and place them in the `pretrained/` folder:
 
 | Model | Description |
 |-------|-------------|
@@ -134,7 +133,7 @@ python train_noise_predictor.py --config LPNSRconfigs/train_noise_predictor.yaml
 
 ## Reproducing the results in our paper
 ### :red_car: Prepare data
-Download datasets used in our paper [腾讯微云](https://share.weiyun.com/2P35qGWJ) (the password is 'qdhijm'),and place them in the `testdata/` folder
+Download datasets used in our paper [Hugging Face](https://huggingface.co/mirpri/LPNSR) or [腾讯微云](https://share.weiyun.com/2P35qGWJ) (password: `qdhijm`),and place them in the `testdata/` folder
 
 ### :rocket: Begin Testing
 ```bash
