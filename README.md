@@ -53,7 +53,7 @@ real-world datasets without any text-to-image priors.
 
 ## Requirements
 
-- Python 3.10, PyTorch 2.9.1+cu130, Xformers 0.0.33.post2
+- Python 3.10.11, PyTorch 2.9.1+cu128, Xformers 0.0.33.post2
 - A suitable conda environment named `lpnsr` can be created and activated with:
 
 ```bash
@@ -73,7 +73,7 @@ pip install xformers==0.0.33.post2
 
 ## Pre-trained Models
 
-Download all pre-trained models from [腾讯微云](https://share.weiyun.com/2P35qGWJ) (the password is 'qdhijm'),and place them in the `pretrained/` folder:
+Download all pre-trained models from [腾讯微云](https://share.weiyun.com/2P35qGWJ) (the password is 'qdhijm') or [Huggingface](https://huggingface.co/mirpri/LPNSR),and place them in the `pretrained/` folder:
 
 | Model | Description |
 |-------|-------------|
