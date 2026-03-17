@@ -26,10 +26,10 @@ from contextlib import nullcontext
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from LPNSR.models.noise_predictor import create_noise_predictor
-from LPNSR.models.unet import UNetModelSwin
-from LPNSR.ldm.models.autoencoder import VQModelTorch
-from LPNSR.models.swinir_sr import create_swinir, SwinIRWrapper
+from models.noise_predictor import create_noise_predictor
+from models.unet import UNetModelSwin
+from ldm.models.autoencoder import VQModelTorch
+from models.swinir_sr import create_swinir, SwinIRWrapper
 
 
 def get_named_eta_schedule(
@@ -229,11 +229,16 @@ class NoisePredictorInference:
             config_path: Path to the config file
             device: Device ('cuda' or 'cpu')
         """
-        self.device = device
+        self.config_path = Path(config_path).resolve()
+        self.config_dir = self.config_path.parent
+        self.project_root = Path(__file__).resolve().parent
 
         # Load config
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(self.config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
+
+        requested_device = device or self.config.get('inference', {}).get('device', 'cuda')
+        self.device = self._resolve_device(requested_device)
 
         # Set random seed
         seed = self.config['inference'].get('seed', 12345)
@@ -246,7 +251,7 @@ class NoisePredictorInference:
         self.chop_size = self.config['inference']['chop_size']
         self.chop_stride = self.config['inference']['chop_stride']
         self.chop_bs = self.config['inference']['chop_bs']
-        self.use_amp = self.config['inference']['use_amp']
+        self.use_amp = self.config['inference']['use_amp'] and self.device == 'cuda'
         self.use_noise_predictor = self.config['inference'].get('use_noise_predictor', True)
         self.use_swinir = self.config['inference'].get('use_swinir', True)
 
@@ -264,9 +269,18 @@ class NoisePredictorInference:
         print(f"  - Scale factor: {self.scale_factor}x")
         print(f"  - Chop size: {self.chop_size}x{self.chop_size}")
         print(f"  - Chop stride: {self.chop_stride}")
+        print(f"  - Device: {self.device}")
+        print(f"  - AMP: {'enabled' if self.use_amp else 'disabled'}")
         print(f"  - Color correction: {'enabled' if self.color_correction else 'disabled'}")
         print(f"  - Noise predictor: {'enabled' if self.use_noise_predictor else 'disabled'}")
         print(f"  - SwinIR SR: {'enabled' if self.swinir else 'disabled'}")
+
+    def _resolve_device(self, requested_device):
+        """Resolve runtime device with safe CUDA fallback."""
+        if requested_device == 'cuda' and not torch.cuda.is_available():
+            print("Warning: CUDA requested but not available, using CPU")
+            return 'cpu'
+        return requested_device
 
     def _init_models(self):
         """Initialize models"""
@@ -304,7 +318,8 @@ class NoisePredictorInference:
         )
 
         # Load pretrained weights
-        vae_ckpt = torch.load(self.config['model']['vae_path'], map_location='cpu')
+        vae_path = self.project_root / self.config['model']['vae_path']
+        vae_ckpt = torch.load(vae_path, map_location='cpu')
 
         # Process state_dict format
         if 'state_dict' in vae_ckpt:
@@ -346,7 +361,8 @@ class NoisePredictorInference:
         self.resshift_unet = UNetModelSwin(**unet_config)
 
         # Load pretrained weights
-        resshift_ckpt = torch.load(self.config['model']['resshift_path'], map_location='cpu')
+        resshift_path = self.project_root / self.config['model']['resshift_path']
+        resshift_ckpt = torch.load(resshift_path, map_location='cpu')
 
         # Process state_dict format
         if 'state_dict' in resshift_ckpt:
@@ -377,7 +393,8 @@ class NoisePredictorInference:
         
         # Load config if config file path is specified
         if 'config_path' in noise_predictor_config:
-            with open(noise_predictor_config['config_path'], 'r', encoding='utf-8') as f:
+            noise_predictor_config_path = self.project_root / noise_predictor_config['config_path']
+            with open(noise_predictor_config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
             self.noise_predictor = create_noise_predictor(
                 image_size=config.get('image_size', 64),
@@ -430,9 +447,10 @@ class NoisePredictorInference:
             )
 
         # Load weights
-        noise_ckpt = torch.load(self.config['model']['noise_predictor_path'], map_location='cpu')
+        noise_predictor_path = self.project_root / self.config['model']['noise_predictor_path']
+        noise_ckpt = torch.load(noise_predictor_path, map_location='cpu')
         state_dict = noise_ckpt
-        print(f" Loading from noise_predictor.pth (weights only)")
+        print(f" Loading from {noise_predictor_path.name} (weights only)")
 
         self.noise_predictor.load_state_dict(state_dict, strict=True)
         self.noise_predictor = self.noise_predictor.to(self.device)
@@ -448,8 +466,11 @@ class NoisePredictorInference:
             swinir_config = self.config['inference'].get('swinir', {})
 
             # SwinIR model path
-            swinir_model_path = swinir_config.get('model_path',
-                self.config['model'].get('swinir_path', 'LPNSR/pretrained/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth'))
+            swinir_path_str = swinir_config.get(
+                'model_path',
+                self.config['model'].get('swinir_path', 'pretrained/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth')
+            )
+            swinir_model_path = self.project_root / swinir_path_str
 
             # Create SwinIR model
             swinir_model = create_swinir(
@@ -463,7 +484,7 @@ class NoisePredictorInference:
                 mlp_ratio=swinir_config.get('mlp_ratio', 2),
                 upsampler=swinir_config.get('upsampler', 'nearest+conv'),
                 resi_connection=swinir_config.get('resi_connection', '1conv'),
-                model_path=swinir_model_path,
+                model_path=str(swinir_model_path),
                 device=self.device
             )
 
@@ -862,7 +883,7 @@ class NoisePredictorInference:
         lr_tensor = lr_tensor * 2.0 - 1.0
 
         # 4. Determine if chop is needed
-        context = lambda: torch.amp.autocast('cuda') if self.use_amp else nullcontext
+        context = lambda: torch.amp.autocast('cuda') if self.use_amp else nullcontext()
 
         if lr_tensor.shape[2] > self.chop_size or lr_tensor.shape[3] > self.chop_size:
             # Use chop for large images
@@ -985,7 +1006,7 @@ def get_parser():
     parser.add_argument(
         "-c", "--config",
         type=str,
-        default="LPNSR/configs/inference.yaml",
+        default="configs/inference.yaml",
         help="Config file path"
     )
     parser.add_argument(

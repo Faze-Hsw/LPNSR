@@ -1,16 +1,16 @@
 experiment:
   name: "noise_predictor"
-  save_dir: "LPNSR/experiments/noise_predictor"
+  save_dir: "experiments/noise_predictor"
   keep_recent_checkpoints: 3
   log_interval: 5000
   save_interval: 1
 
 resshift:
-  vae_path: "LPNSR/pretrained/autoencoder_vq_f4.pth"
-  unet_path: "LPNSR/pretrained/resshift_realsrx4_s4_v3.pth"
+  vae_path: "pretrained/autoencoder_vq_f4.pth"
+  unet_path: "pretrained/resshift_realsrx4_s4_v3.pth"
 
 noise_predictor:
-  config_path: "LPNSR/configs/noise_predictor_config.yaml"
+  config_path: "configs/noise_predictor_config.yaml"
 
 training:
   num_epochs: 50
@@ -36,7 +36,7 @@ training:
 
 data:
   train:
-    hr_dir: "LPNSR/traindata"
+    hr_dir: "traindata"
     lr_dir: null
     crop_size: 256
     scale: 4
@@ -46,7 +46,7 @@ data:
 
 degradation:
   use_degradation: true
-  config_path: "LPNSR/configs/realesrgan_degradation.yaml"
+  config_path: "configs/realesrgan_degradation.yaml"
 
 loss:
   l1_weight: 1.0

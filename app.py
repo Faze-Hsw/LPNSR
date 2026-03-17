@@ -11,6 +11,7 @@ import numpy as np
 import gradio as gr
 from pathlib import Path
 import sys
+import torch
 
 # Add LPNSR to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -25,6 +26,10 @@ inference_engine = None
 def initialize_inference(device='cuda', num_steps=4, color_correction=True):
     """Initialize the inference engine"""
     global inference_engine
+
+    if device == 'cuda' and not torch.cuda.is_available():
+        print("CUDA not available in this environment, using CPU instead")
+        device = 'cpu'
 
     if inference_engine is None:
         config_path = Path(__file__).parent / 'configs' / 'inference.yaml'

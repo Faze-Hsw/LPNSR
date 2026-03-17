@@ -7,12 +7,12 @@ from contextlib import contextmanager
 
 import loralib as lora
 
-from LPNSR.ldm.modules.diffusionmodules.model import Encoder, Decoder
-from LPNSR.ldm.modules.distributions.distributions import DiagonalGaussianDistribution
-from LPNSR.ldm.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
+from ldm.modules.diffusionmodules.model import Encoder, Decoder
+from ldm.modules.distributions.distributions import DiagonalGaussianDistribution
+from ldm.modules.vqvae.quantize import VectorQuantizer2 as VectorQuantizer
 
-from LPNSR.ldm.util import instantiate_from_config
-from LPNSR.ldm.modules.ema import LitEma
+from ldm.util import instantiate_from_config
+from ldm.modules.ema import LitEma
 
 class VQModelTorch(nn.Module):
     def __init__(self,

@@ -31,12 +31,12 @@ from collections import OrderedDict
 
 matplotlib.use('Agg')  # Use non-interactive backend, suitable for server environments
 
-from LPNSR.models.noise_predictor import create_noise_predictor
-from LPNSR.models.unet import UNetModelSwin
-from LPNSR.ldm.models.autoencoder import VQModelTorch
-from LPNSR.losses.lpips_loss import LPIPSLoss
-from LPNSR.losses.gan_loss import GANLoss, create_discriminator
-from LPNSR.datapipe.train_dataloader import create_train_dataloader
+from models.noise_predictor import create_noise_predictor
+from models.unet import UNetModelSwin
+from ldm.models.autoencoder import VQModelTorch
+from losses.lpips_loss import LPIPSLoss
+from losses.gan_loss import GANLoss, create_discriminator
+from datapipe.train_dataloader import create_train_dataloader
 
 
 def get_named_eta_schedule(

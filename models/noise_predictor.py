@@ -138,7 +138,7 @@ class DiagonalGaussianDistribution:
         return self.mean
 
 # Import basic operations from ldm modules
-from LPNSR.ldm.modules.diffusionmodules.openaimodel import (
+from ldm.modules.diffusionmodules.openaimodel import (
     conv_nd,
     linear,
     avg_pool_nd,
@@ -148,7 +148,7 @@ from LPNSR.ldm.modules.diffusionmodules.openaimodel import (
 )
 
 # Import Swin Transformer layer (required - no fallback)
-from LPNSR.models.swin_transformer import BasicLayer
+from models.swin_transformer import BasicLayer
 
 
 class TimestepBlock(nn.Module):
