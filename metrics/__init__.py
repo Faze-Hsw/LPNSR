@@ -11,49 +11,49 @@ Includes the following metrics:
 |- MUSIQ: Multi-Scale Image Quality Transformer (no-reference metric)
 """
 
-from .psnr import calculate_psnr, PSNR
-from .ssim import calculate_ssim, SSIM
-from .lpips import calculate_lpips, LPIPS
-from .niqe import calculate_niqe, NIQE
-from .pi import calculate_pi, PI
-from .clipiqa import calculate_clipiqa, CLIPIQA
-from .musiq import calculate_musiq, MUSIQ
+from .clipiqa import CLIPIQA, calculate_clipiqa
+from .lpips import LPIPS, calculate_lpips
 from .metric_utils import (
-    img2tensor,
-    tensor2img,
-    rgb2ycbcr,
     bgr2ycbcr,
-    to_y_channel,
+    img2tensor,
     reorder_image,
+    rgb2ycbcr,
+    tensor2img,
+    to_y_channel,
 )
+from .musiq import MUSIQ, calculate_musiq
+from .niqe import NIQE, calculate_niqe
+from .pi import PI, calculate_pi
+from .psnr import PSNR, calculate_psnr
+from .ssim import SSIM, calculate_ssim
 
 __all__ = [
     # PSNR
-    'calculate_psnr',
-    'PSNR',
+    "calculate_psnr",
+    "PSNR",
     # SSIM
-    'calculate_ssim', 
-    'SSIM',
+    "calculate_ssim",
+    "SSIM",
     # LPIPS
-    'calculate_lpips',
-    'LPIPS',
+    "calculate_lpips",
+    "LPIPS",
     # NIQE
-    'calculate_niqe',
-    'NIQE',
+    "calculate_niqe",
+    "NIQE",
     # PI
-    'calculate_pi',
-    'PI',
+    "calculate_pi",
+    "PI",
     # CLIPIQA
-    'calculate_clipiqa',
-    'CLIPIQA',
+    "calculate_clipiqa",
+    "CLIPIQA",
     # MUSIQ
-    'calculate_musiq',
-    'MUSIQ',
+    "calculate_musiq",
+    "MUSIQ",
     # Utility functions
-    'img2tensor',
-    'tensor2img',
-    'rgb2ycbcr',
-    'bgr2ycbcr',
-    'to_y_channel',
-    'reorder_image',
+    "img2tensor",
+    "tensor2img",
+    "rgb2ycbcr",
+    "bgr2ycbcr",
+    "to_y_channel",
+    "reorder_image",
 ]

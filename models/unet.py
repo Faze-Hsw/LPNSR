@@ -3,21 +3,22 @@ UNet-SwinTransformer model for predicting X0 during ResShift reverse process
 Based on UNetModelSwin implementation from ResShift project
 """
 
-from abc import abstractmethod
 import math
+from abc import abstractmethod
+
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .fp16_util import convert_module_to_f16, convert_module_to_f32
 from .basic_ops import (
-    linear,
-    conv_nd,
     avg_pool_nd,
-    zero_module,
+    conv_nd,
+    linear,
     normalization,
     timestep_embedding,
+    zero_module,
 )
+from .fp16_util import convert_module_to_f16, convert_module_to_f32
 from .swin_transformer import BasicLayer
 
 
@@ -84,6 +85,7 @@ class Downsample(nn.Module):
     :param use_conv: Whether to apply convolution
     :param dims: Whether the signal is 1D, 2D, or 3D
     """
+
     def __init__(self, channels, use_conv, dims=2, out_channels=None):
         super().__init__()
         self.channels = channels
@@ -116,6 +118,7 @@ class ResBlock(TimestepBlock):
     :param up: If True, use this block for upsampling
     :param down: If True, use this block for downsampling
     """
+
     def __init__(
         self,
         channels,
@@ -259,7 +262,9 @@ class UNetModelSwin(nn.Module):
         super().__init__()
 
         if isinstance(num_res_blocks, int):
-            num_res_blocks = [num_res_blocks,] * len(channel_mult)
+            num_res_blocks = [
+                num_res_blocks,
+            ] * len(channel_mult)
         else:
             assert len(num_res_blocks) == len(channel_mult)
         if num_heads == -1:
@@ -298,7 +303,9 @@ class UNetModelSwin(nn.Module):
             for ii in range(int(math.log(lq_size / image_size) / math.log(2))):
                 feature_extractor.append(nn.Conv2d(feature_chn, base_chn, 3, 1, 1))
                 feature_extractor.append(nn.SiLU())
-                feature_extractor.append(Downsample(base_chn, True, out_channels=base_chn*2))
+                feature_extractor.append(
+                    Downsample(base_chn, True, out_channels=base_chn * 2)
+                )
                 base_chn *= 2
                 feature_chn = base_chn
             self.feature_extractor = nn.Sequential(*feature_extractor)
@@ -310,7 +317,7 @@ class UNetModelSwin(nn.Module):
         )
         input_block_chans = [ch]
         ds = image_size
-        
+
         # Build input blocks (encoder)
         for level, mult in enumerate(channel_mult):
             for jj in range(num_res_blocks[level]):
@@ -326,26 +333,28 @@ class UNetModelSwin(nn.Module):
                 ]
                 ch = int(mult * model_channels)
                 # Add Swin Transformer to first block of each level
-                if ds in attention_resolutions and jj==0:
+                if ds in attention_resolutions and jj == 0:
                     layers.append(
                         BasicLayer(
-                                in_chans=ch,
-                                embed_dim=swin_embed_dim,
-                                num_heads=num_heads if num_head_channels == -1 else swin_embed_dim // num_head_channels,
-                                window_size=window_size,
-                                depth=swin_depth,
-                                img_size=ds,
-                                patch_size=1,
-                                mlp_ratio=mlp_ratio,
-                                qkv_bias=True,
-                                qk_scale=None,
-                                drop=dropout,
-                                attn_drop=0.,
-                                drop_path=0.,
-                                use_checkpoint=False,
-                                norm_layer=normalization,
-                                patch_norm=patch_norm,
-                                 )
+                            in_chans=ch,
+                            embed_dim=swin_embed_dim,
+                            num_heads=num_heads
+                            if num_head_channels == -1
+                            else swin_embed_dim // num_head_channels,
+                            window_size=window_size,
+                            depth=swin_depth,
+                            img_size=ds,
+                            patch_size=1,
+                            mlp_ratio=mlp_ratio,
+                            qkv_bias=True,
+                            qk_scale=None,
+                            drop=dropout,
+                            attn_drop=0.0,
+                            drop_path=0.0,
+                            use_checkpoint=False,
+                            norm_layer=normalization,
+                            patch_norm=patch_norm,
+                        )
                     )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
                 input_block_chans.append(ch)
@@ -382,23 +391,25 @@ class UNetModelSwin(nn.Module):
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
             BasicLayer(
-                    in_chans=ch,
-                    embed_dim=swin_embed_dim,
-                    num_heads=num_heads if num_head_channels == -1 else swin_embed_dim // num_head_channels,
-                    window_size=window_size,
-                    depth=swin_depth,
-                    img_size=ds,
-                    patch_size=1,
-                    mlp_ratio=mlp_ratio,
-                    qkv_bias=True,
-                    qk_scale=None,
-                    drop=dropout,
-                    attn_drop=0.,
-                    drop_path=0.,
-                    use_checkpoint=False,
-                    norm_layer=normalization,
-                    patch_norm=patch_norm,
-                     ),
+                in_chans=ch,
+                embed_dim=swin_embed_dim,
+                num_heads=num_heads
+                if num_head_channels == -1
+                else swin_embed_dim // num_head_channels,
+                window_size=window_size,
+                depth=swin_depth,
+                img_size=ds,
+                patch_size=1,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=True,
+                qk_scale=None,
+                drop=dropout,
+                attn_drop=0.0,
+                drop_path=0.0,
+                use_checkpoint=False,
+                norm_layer=normalization,
+                patch_norm=patch_norm,
+            ),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -425,26 +436,28 @@ class UNetModelSwin(nn.Module):
                 ]
                 ch = int(model_channels * mult)
                 # Add Swin Transformer to first block of each level
-                if ds in attention_resolutions and i==0:
+                if ds in attention_resolutions and i == 0:
                     layers.append(
                         BasicLayer(
-                                in_chans=ch,
-                                embed_dim=swin_embed_dim,
-                                num_heads=num_heads if num_head_channels == -1 else swin_embed_dim // num_head_channels,
-                                window_size=window_size,
-                                depth=swin_depth,
-                                img_size=ds,
-                                patch_size=1,
-                                mlp_ratio=mlp_ratio,
-                                qkv_bias=True,
-                                qk_scale=None,
-                                drop=dropout,
-                                attn_drop=0.,
-                                drop_path=0.,
-                                use_checkpoint=False,
-                                norm_layer=normalization,
-                                patch_norm=patch_norm,
-                                 )
+                            in_chans=ch,
+                            embed_dim=swin_embed_dim,
+                            num_heads=num_heads
+                            if num_head_channels == -1
+                            else swin_embed_dim // num_head_channels,
+                            window_size=window_size,
+                            depth=swin_depth,
+                            img_size=ds,
+                            patch_size=1,
+                            mlp_ratio=mlp_ratio,
+                            qkv_bias=True,
+                            qk_scale=None,
+                            drop=dropout,
+                            attn_drop=0.0,
+                            drop_path=0.0,
+                            use_checkpoint=False,
+                            norm_layer=normalization,
+                            patch_norm=patch_norm,
+                        )
                     )
                 if level and i == num_res_blocks[level]:
                     out_ch = ch
@@ -481,7 +494,9 @@ class UNetModelSwin(nn.Module):
         :return: [N x C x ...] Output tensor
         """
         hs = []
-        emb = self.time_embed(timestep_embedding(timesteps, self.model_channels)).type(self.dtype)
+        emb = self.time_embed(timestep_embedding(timesteps, self.model_channels)).type(
+            self.dtype
+        )
 
         # Process low-quality image conditioning
         if lq is not None:

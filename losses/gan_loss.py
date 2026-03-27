@@ -25,12 +25,7 @@ class NLayerDiscriminator(nn.Module):
     """
 
     def __init__(
-            self,
-            input_nc=3,
-            ndf=64,
-            n_layers=3,
-            norm_type='spectral',
-            use_sigmoid=False
+        self, input_nc=3, ndf=64, n_layers=3, norm_type="spectral", use_sigmoid=False
     ):
         """
         Args:
@@ -45,13 +40,13 @@ class NLayerDiscriminator(nn.Module):
         self.use_sigmoid = use_sigmoid
 
         # Choose normalization layer
-        if norm_type == 'batch':
+        if norm_type == "batch":
             norm_layer = nn.BatchNorm2d
             use_spectral = False
-        elif norm_type == 'instance':
+        elif norm_type == "instance":
             norm_layer = nn.InstanceNorm2d
             use_spectral = False
-        elif norm_type == 'spectral':
+        elif norm_type == "spectral":
             norm_layer = None
             use_spectral = True
         else:
@@ -64,9 +59,15 @@ class NLayerDiscriminator(nn.Module):
         # First layer: no normalization
         sequence = []
         if use_spectral:
-            sequence.append(spectral_norm(nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)))
+            sequence.append(
+                spectral_norm(
+                    nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)
+                )
+            )
         else:
-            sequence.append(nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw))
+            sequence.append(
+                nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)
+            )
         sequence.append(nn.LeakyReLU(0.2, True))
 
         # Middle layers
@@ -74,14 +75,30 @@ class NLayerDiscriminator(nn.Module):
         nf_mult_prev = 1
         for n in range(1, n_layers):
             nf_mult_prev = nf_mult
-            nf_mult = min(2 ** n, 8)
+            nf_mult = min(2**n, 8)
 
             if use_spectral:
-                sequence.append(spectral_norm(
-                    nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw)
-                ))
+                sequence.append(
+                    spectral_norm(
+                        nn.Conv2d(
+                            ndf * nf_mult_prev,
+                            ndf * nf_mult,
+                            kernel_size=kw,
+                            stride=2,
+                            padding=padw,
+                        )
+                    )
+                )
             else:
-                sequence.append(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw))
+                sequence.append(
+                    nn.Conv2d(
+                        ndf * nf_mult_prev,
+                        ndf * nf_mult,
+                        kernel_size=kw,
+                        stride=2,
+                        padding=padw,
+                    )
+                )
 
             if norm_layer is not None:
                 sequence.append(norm_layer(ndf * nf_mult))
@@ -90,14 +107,30 @@ class NLayerDiscriminator(nn.Module):
 
         # Second to last layer
         nf_mult_prev = nf_mult
-        nf_mult = min(2 ** n_layers, 8)
+        nf_mult = min(2**n_layers, 8)
 
         if use_spectral:
-            sequence.append(spectral_norm(
-                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw)
-            ))
+            sequence.append(
+                spectral_norm(
+                    nn.Conv2d(
+                        ndf * nf_mult_prev,
+                        ndf * nf_mult,
+                        kernel_size=kw,
+                        stride=1,
+                        padding=padw,
+                    )
+                )
+            )
         else:
-            sequence.append(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw))
+            sequence.append(
+                nn.Conv2d(
+                    ndf * nf_mult_prev,
+                    ndf * nf_mult,
+                    kernel_size=kw,
+                    stride=1,
+                    padding=padw,
+                )
+            )
 
         if norm_layer is not None:
             sequence.append(norm_layer(ndf * nf_mult))
@@ -106,11 +139,15 @@ class NLayerDiscriminator(nn.Module):
 
         # Last layer: output 1 channel
         if use_spectral:
-            sequence.append(spectral_norm(
-                nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)
-            ))
+            sequence.append(
+                spectral_norm(
+                    nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)
+                )
+            )
         else:
-            sequence.append(nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw))
+            sequence.append(
+                nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)
+            )
 
         self.model = nn.Sequential(*sequence)
 
@@ -136,12 +173,7 @@ class UNetDiscriminator(nn.Module):
     Reference: Real-ESRGAN
     """
 
-    def __init__(
-            self,
-            input_nc=3,
-            ndf=64,
-            skip_connection=True
-    ):
+    def __init__(self, input_nc=3, ndf=64, skip_connection=True):
         """
         Args:
             input_nc: Number of input channels
@@ -155,18 +187,34 @@ class UNetDiscriminator(nn.Module):
         # Encoder
         self.conv0 = nn.Conv2d(input_nc, ndf, kernel_size=3, stride=1, padding=1)
 
-        self.conv1 = spectral_norm(nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1, bias=False))
-        self.conv2 = spectral_norm(nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1, bias=False))
-        self.conv3 = spectral_norm(nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1, bias=False))
+        self.conv1 = spectral_norm(
+            nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1, bias=False)
+        )
+        self.conv2 = spectral_norm(
+            nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1, bias=False)
+        )
+        self.conv3 = spectral_norm(
+            nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1, bias=False)
+        )
 
         # Decoder
-        self.conv4 = spectral_norm(nn.Conv2d(ndf * 8, ndf * 4, kernel_size=3, stride=1, padding=1, bias=False))
-        self.conv5 = spectral_norm(nn.Conv2d(ndf * 4, ndf * 2, kernel_size=3, stride=1, padding=1, bias=False))
-        self.conv6 = spectral_norm(nn.Conv2d(ndf * 2, ndf, kernel_size=3, stride=1, padding=1, bias=False))
+        self.conv4 = spectral_norm(
+            nn.Conv2d(ndf * 8, ndf * 4, kernel_size=3, stride=1, padding=1, bias=False)
+        )
+        self.conv5 = spectral_norm(
+            nn.Conv2d(ndf * 4, ndf * 2, kernel_size=3, stride=1, padding=1, bias=False)
+        )
+        self.conv6 = spectral_norm(
+            nn.Conv2d(ndf * 2, ndf, kernel_size=3, stride=1, padding=1, bias=False)
+        )
 
         # Final output
-        self.conv7 = spectral_norm(nn.Conv2d(ndf, ndf, kernel_size=3, stride=1, padding=1, bias=False))
-        self.conv8 = spectral_norm(nn.Conv2d(ndf, ndf, kernel_size=3, stride=1, padding=1, bias=False))
+        self.conv7 = spectral_norm(
+            nn.Conv2d(ndf, ndf, kernel_size=3, stride=1, padding=1, bias=False)
+        )
+        self.conv8 = spectral_norm(
+            nn.Conv2d(ndf, ndf, kernel_size=3, stride=1, padding=1, bias=False)
+        )
         self.conv9 = nn.Conv2d(ndf, 1, kernel_size=3, stride=1, padding=1)
 
         self.lrelu = nn.LeakyReLU(0.2, True)
@@ -186,17 +234,23 @@ class UNetDiscriminator(nn.Module):
         feat3 = self.lrelu(self.conv3(feat2))
 
         # Decoding + upsampling
-        feat3 = F.interpolate(feat3, scale_factor=2, mode='bilinear', align_corners=False)
+        feat3 = F.interpolate(
+            feat3, scale_factor=2, mode="bilinear", align_corners=False
+        )
         feat4 = self.lrelu(self.conv4(feat3))
         if self.skip_connection:
             feat4 = feat4 + feat2
 
-        feat4 = F.interpolate(feat4, scale_factor=2, mode='bilinear', align_corners=False)
+        feat4 = F.interpolate(
+            feat4, scale_factor=2, mode="bilinear", align_corners=False
+        )
         feat5 = self.lrelu(self.conv5(feat4))
         if self.skip_connection:
             feat5 = feat5 + feat1
 
-        feat5 = F.interpolate(feat5, scale_factor=2, mode='bilinear', align_corners=False)
+        feat5 = F.interpolate(
+            feat5, scale_factor=2, mode="bilinear", align_corners=False
+        )
         feat6 = self.lrelu(self.conv6(feat5))
         if self.skip_connection:
             feat6 = feat6 + feat0
@@ -222,11 +276,7 @@ class GANLoss(nn.Module):
     """
 
     def __init__(
-            self,
-            gan_type='lsgan',
-            real_label=1.0,
-            fake_label=0.0,
-            loss_weight=1.0
+        self, gan_type="lsgan", real_label=1.0, fake_label=0.0, loss_weight=1.0
     ):
         """
         Args:
@@ -242,11 +292,11 @@ class GANLoss(nn.Module):
         self.fake_label = fake_label
         self.loss_weight = loss_weight
 
-        if gan_type == 'vanilla':
+        if gan_type == "vanilla":
             self.loss = nn.BCEWithLogitsLoss()
-        elif gan_type == 'lsgan':
+        elif gan_type == "lsgan":
             self.loss = nn.MSELoss()
-        elif gan_type in ['wgan', 'wgan-gp', 'hinge']:
+        elif gan_type in ["wgan", "wgan-gp", "hinge"]:
             self.loss = None
         else:
             raise ValueError(f"Unsupported GAN type: {gan_type}")
@@ -271,23 +321,23 @@ class GANLoss(nn.Module):
         Returns:
             GAN loss value
         """
-        if self.gan_type == 'vanilla' or self.gan_type == 'lsgan':
+        if self.gan_type == "vanilla" or self.gan_type == "lsgan":
             target_label = self._get_target_label(pred, target_is_real)
             loss = self.loss(pred, target_label)
 
-        elif self.gan_type == 'wgan':
+        elif self.gan_type == "wgan":
             if target_is_real:
                 loss = -pred.mean()
             else:
                 loss = pred.mean()
 
-        elif self.gan_type == 'wgan-gp':
+        elif self.gan_type == "wgan-gp":
             if target_is_real:
                 loss = -pred.mean()
             else:
                 loss = pred.mean()
 
-        elif self.gan_type == 'hinge':
+        elif self.gan_type == "hinge":
             if is_disc:
                 if target_is_real:
                     loss = F.relu(1.0 - pred).mean()
@@ -333,7 +383,7 @@ class GANLoss(nn.Module):
             grad_outputs=torch.ones_like(d_interpolates),
             create_graph=True,
             retain_graph=True,
-            only_inputs=True
+            only_inputs=True,
         )[0]
 
         # Calculate gradient penalty
@@ -344,11 +394,7 @@ class GANLoss(nn.Module):
 
 
 def create_discriminator(
-        disc_type='patch',
-        input_nc=3,
-        ndf=64,
-        n_layers=3,
-        norm_type='spectral'
+    disc_type="patch", input_nc=3, ndf=64, n_layers=3, norm_type="spectral"
 ):
     """
     Create discriminator
@@ -363,31 +409,29 @@ def create_discriminator(
     Returns:
         Discriminator instance
     """
-    if disc_type == 'patch':
+    if disc_type == "patch":
         return NLayerDiscriminator(
             input_nc=input_nc,
             ndf=ndf,
             n_layers=n_layers,
             norm_type=norm_type,
-            use_sigmoid=False
+            use_sigmoid=False,
         )
-    elif disc_type == 'unet':
-        return UNetDiscriminator(
-            input_nc=input_nc,
-            ndf=ndf,
-            skip_connection=True
-        )
+    elif disc_type == "unet":
+        return UNetDiscriminator(input_nc=input_nc, ndf=ndf, skip_connection=True)
     else:
         raise ValueError(f"Unsupported discriminator type: {disc_type}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Test code
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Test PatchGAN discriminator
     print("Testing PatchGAN discriminator...")
-    disc_patch = create_discriminator('patch', input_nc=3, ndf=64, n_layers=3).to(device)
+    disc_patch = create_discriminator("patch", input_nc=3, ndf=64, n_layers=3).to(
+        device
+    )
     x = torch.randn(2, 3, 256, 256).to(device)
     out = disc_patch(x)
     print(f"  Input: {x.shape}")
@@ -396,7 +440,7 @@ if __name__ == '__main__':
 
     # Test UNet discriminator
     print("\nTesting UNet discriminator...")
-    disc_unet = create_discriminator('unet', input_nc=3, ndf=64).to(device)
+    disc_unet = create_discriminator("unet", input_nc=3, ndf=64).to(device)
     out = disc_unet(x)
     print(f"  Input: {x.shape}")
     print(f"  Output: {out.shape}")
@@ -404,7 +448,7 @@ if __name__ == '__main__':
 
     # Test GAN loss
     print("\nTesting GAN loss...")
-    gan_loss = GANLoss(gan_type='lsgan', loss_weight=1.0)
+    gan_loss = GANLoss(gan_type="lsgan", loss_weight=1.0)
 
     fake_pred = torch.randn(2, 1, 30, 30).to(device)
     real_pred = torch.randn(2, 1, 30, 30).to(device)

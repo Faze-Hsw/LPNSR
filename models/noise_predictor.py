@@ -7,23 +7,37 @@ Output: DiagonalGaussianDistribution (mean and logvar for probabilistic predicti
 """
 
 import math
+from typing import Optional, Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
+
+# Import basic operations from ldm modules
+from ldm.modules.diffusionmodules.openaimodel import (
+    avg_pool_nd,
+    conv_nd,
+    linear,
+    normalization,
+    timestep_embedding,
+    zero_module,
+)
+
+# Import Swin Transformer layer (required - no fallback)
+from models.swin_transformer import BasicLayer
 
 
 class DiagonalGaussianDistribution:
     """
     Diagonal Gaussian distribution for probabilistic noise prediction.
     Allows sampling and KL divergence computation.
-    
+
     Args:
         parameters: Tensor of shape [B, 2*C, H, W] where first half is mean, second half is logvar
         deterministic: If True, std is set to 0 (deterministic mode)
     """
-    
+
     def __init__(self, parameters: torch.Tensor, deterministic: bool = False):
         self.parameters = parameters
         self.mean, self.logvar = torch.chunk(parameters, 2, dim=1)
@@ -31,45 +45,49 @@ class DiagonalGaussianDistribution:
         self.deterministic = deterministic
         self.std = torch.exp(0.5 * self.logvar)
         self.var = torch.exp(self.logvar)
-        
+
         if self.deterministic:
             self.var = self.std = torch.zeros_like(
                 self.mean, device=self.parameters.device, dtype=self.parameters.dtype
             )
-    
+
     def sample(self, generator: Optional[torch.Generator] = None) -> torch.Tensor:
         """
         Sample from the distribution.
-        
+
         Returns:
             Sampled tensor of shape [B, C, H, W]
         """
         if generator is not None:
             device = self.mean.device
             sample = torch.randn(
-                self.mean.shape, 
-                generator=generator, 
-                device=device, 
-                dtype=self.mean.dtype
+                self.mean.shape,
+                generator=generator,
+                device=device,
+                dtype=self.mean.dtype,
             )
         else:
             sample = torch.randn_like(self.mean)
-        
+
         return self.mean + self.std * sample
-    
-    def kl(self, other: Optional['DiagonalGaussianDistribution'] = None) -> torch.Tensor:
+
+    def kl(
+        self, other: Optional["DiagonalGaussianDistribution"] = None
+    ) -> torch.Tensor:
         """
         Compute KL divergence KL(self || other).
-        
+
         Args:
             other: Another distribution. If None, compute KL(self || N(0, I))
-            
+
         Returns:
             KL divergence per batch element [B]
         """
         if self.deterministic:
-            return torch.zeros([self.mean.shape[0]], device=self.mean.device, dtype=self.mean.dtype)
-        
+            return torch.zeros(
+                [self.mean.shape[0]], device=self.mean.device, dtype=self.mean.dtype
+            )
+
         if other is None:
             # KL(self || N(0, I))
             return 0.5 * torch.sum(
@@ -86,20 +104,24 @@ class DiagonalGaussianDistribution:
                 + other.logvar,
                 dim=[1, 2, 3],
             )
-    
-    def partial_kl(self, other: Optional['DiagonalGaussianDistribution'] = None) -> torch.Tensor:
+
+    def partial_kl(
+        self, other: Optional["DiagonalGaussianDistribution"] = None
+    ) -> torch.Tensor:
         """
         Compute partial KL divergence (variance term only).
-        
+
         Args:
             other: Another distribution. If None, compute partial KL relative to N(0, I)
-            
+
         Returns:
             Partial KL divergence per batch element [B]
         """
         if self.deterministic:
-            return torch.zeros([self.mean.shape[0]], device=self.mean.device, dtype=self.mean.dtype)
-        
+            return torch.zeros(
+                [self.mean.shape[0]], device=self.mean.device, dtype=self.mean.dtype
+            )
+
         if other is None:
             return 0.5 * torch.sum(self.var - 1.0 - self.logvar, dim=[1, 2, 3])
         else:
@@ -107,48 +129,39 @@ class DiagonalGaussianDistribution:
                 self.var / other.var - 1.0 - self.logvar + other.logvar,
                 dim=[1, 2, 3],
             )
-    
-    def nll(self, sample: torch.Tensor, dims: Tuple[int, ...] = (1, 2, 3)) -> torch.Tensor:
+
+    def nll(
+        self, sample: torch.Tensor, dims: Tuple[int, ...] = (1, 2, 3)
+    ) -> torch.Tensor:
         """
         Compute negative log likelihood.
-        
+
         Args:
             sample: Sample tensor
             dims: Dimensions to sum over
-            
+
         Returns:
             NLL per batch element [B]
         """
         if self.deterministic:
-            return torch.zeros([self.mean.shape[0]], device=self.mean.device, dtype=self.mean.dtype)
-        
+            return torch.zeros(
+                [self.mean.shape[0]], device=self.mean.device, dtype=self.mean.dtype
+            )
+
         logtwopi = np.log(2.0 * np.pi)
         return 0.5 * torch.sum(
             logtwopi + self.logvar + torch.pow(sample - self.mean, 2) / self.var,
             dim=dims,
         )
-    
+
     def mode(self) -> torch.Tensor:
         """
         Get the mode of the distribution (equivalent to mean for Gaussian).
-        
+
         Returns:
             Mean tensor of shape [B, C, H, W]
         """
         return self.mean
-
-# Import basic operations from ldm modules
-from LPNSR.ldm.modules.diffusionmodules.openaimodel import (
-    conv_nd,
-    linear,
-    avg_pool_nd,
-    zero_module,
-    normalization,
-    timestep_embedding,
-)
-
-# Import Swin Transformer layer (required - no fallback)
-from LPNSR.models.swin_transformer import BasicLayer
 
 
 class TimestepBlock(nn.Module):
@@ -430,7 +443,9 @@ class SwinUNetNoisePredictor(nn.Module):
             for _ in range(num_down):
                 feature_extractor.append(nn.Conv2d(feature_chn, base_chn, 3, 1, 1))
                 feature_extractor.append(nn.SiLU())
-                feature_extractor.append(Downsample(base_chn, True, out_channels=base_chn * 2))
+                feature_extractor.append(
+                    Downsample(base_chn, True, out_channels=base_chn * 2)
+                )
                 base_chn *= 2
                 feature_chn = base_chn
             self.feature_extractor = nn.Sequential(*feature_extractor)
@@ -441,7 +456,11 @@ class SwinUNetNoisePredictor(nn.Module):
         in_channels_total = in_channels * 2 + base_chn  # z_t + pred_x0 + lq特征
 
         self.input_blocks = nn.ModuleList(
-            [TimestepEmbedSequential(conv_nd(dims, in_channels_total, ch, 3, padding=1))]
+            [
+                TimestepEmbedSequential(
+                    conv_nd(dims, in_channels_total, ch, 3, padding=1)
+                )
+            ]
         )
         input_block_chans = [ch]
         ds = image_size
@@ -466,7 +485,9 @@ class SwinUNetNoisePredictor(nn.Module):
                         BasicLayer(
                             in_chans=ch,
                             embed_dim=swin_embed_dim,
-                            num_heads=num_heads if num_head_channels == -1 else swin_embed_dim // num_head_channels,
+                            num_heads=num_heads
+                            if num_head_channels == -1
+                            else swin_embed_dim // num_head_channels,
                             window_size=window_size,
                             depth=swin_depth,
                             img_size=ds,
@@ -475,8 +496,8 @@ class SwinUNetNoisePredictor(nn.Module):
                             qkv_bias=True,
                             qk_scale=None,
                             drop=dropout,
-                            attn_drop=0.,
-                            drop_path=0.,
+                            attn_drop=0.0,
+                            drop_path=0.0,
                             use_checkpoint=self.use_gradient_checkpointing,
                             norm_layer=normalization,
                             patch_norm=patch_norm,
@@ -522,7 +543,9 @@ class SwinUNetNoisePredictor(nn.Module):
             BasicLayer(
                 in_chans=ch,
                 embed_dim=swin_embed_dim,
-                num_heads=num_heads if num_head_channels == -1 else swin_embed_dim // num_head_channels,
+                num_heads=num_heads
+                if num_head_channels == -1
+                else swin_embed_dim // num_head_channels,
                 window_size=window_size,
                 depth=swin_depth,
                 img_size=ds,
@@ -531,8 +554,8 @@ class SwinUNetNoisePredictor(nn.Module):
                 qkv_bias=True,
                 qk_scale=None,
                 drop=dropout,
-                attn_drop=0.,
-                drop_path=0.,
+                attn_drop=0.0,
+                drop_path=0.0,
                 use_checkpoint=self.use_gradient_checkpointing,
                 norm_layer=normalization,
                 patch_norm=patch_norm,
@@ -572,7 +595,9 @@ class SwinUNetNoisePredictor(nn.Module):
                         BasicLayer(
                             in_chans=ch,
                             embed_dim=swin_embed_dim,
-                            num_heads=num_heads if num_head_channels == -1 else swin_embed_dim // num_head_channels,
+                            num_heads=num_heads
+                            if num_head_channels == -1
+                            else swin_embed_dim // num_head_channels,
                             window_size=window_size,
                             depth=swin_depth,
                             img_size=ds,
@@ -581,8 +606,8 @@ class SwinUNetNoisePredictor(nn.Module):
                             qkv_bias=True,
                             qk_scale=None,
                             drop=dropout,
-                            attn_drop=0.,
-                            drop_path=0.,
+                            attn_drop=0.0,
+                            drop_path=0.0,
                             use_checkpoint=self.use_gradient_checkpointing,
                             norm_layer=normalization,
                             patch_norm=patch_norm,
@@ -642,7 +667,9 @@ class SwinUNetNoisePredictor(nn.Module):
             Predicted noise tensor [B, C, H, W] (or DiagonalGaussianDistribution if return_dist=True)
         """
         hs = []
-        emb = self.time_embed(timestep_embedding(timesteps, self.model_channels)).type(self.dtype)
+        emb = self.time_embed(timestep_embedding(timesteps, self.model_channels)).type(
+            self.dtype
+        )
 
         # Process LQ condition
         lq = self.feature_extractor(lr_image.type(self.dtype))
@@ -680,25 +707,21 @@ class SwinUNetNoisePredictor(nn.Module):
 
 
 def create_noise_predictor(
-    image_size: int = 64,
-    latent_channels: int = 3,
-    **kwargs
+    image_size: int = 64, latent_channels: int = 3, **kwargs
 ) -> nn.Module:
     """
     Create a noise predictor with ResShift Swin-UNet architecture.
-    
+
     Args:
         image_size: Size of the latent space
         latent_channels: Number of channels in latent space
         **kwargs: Additional arguments passed to SwinUNetNoisePredictor
-        
+
     Returns:
         SwinUNetNoisePredictor model
     """
     return SwinUNetNoisePredictor(
-        image_size=image_size,
-        in_channels=latent_channels,
-        **kwargs
+        image_size=image_size, in_channels=latent_channels, **kwargs
     )
 
 
@@ -757,4 +780,6 @@ if __name__ == "__main__":
     kl = dist.kl()
     print(f"KL divergence shape: {kl.shape}, mean: {kl.mean().item():.4f}")
 
-    print(f"\nModel parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M")
+    print(
+        f"\nModel parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f}M"
+    )

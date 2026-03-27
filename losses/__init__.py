@@ -8,14 +8,19 @@ Includes the following loss functions:
 """
 
 from .basic_loss import L2Loss
-from .gan_loss import GANLoss, NLayerDiscriminator, UNetDiscriminator, create_discriminator
+from .gan_loss import (
+    GANLoss,
+    NLayerDiscriminator,
+    UNetDiscriminator,
+    create_discriminator,
+)
 from .lpips_loss import LPIPSLoss
 
 __all__ = [
-    'L2Loss',
-    'GANLoss',
-    'NLayerDiscriminator',
-    'UNetDiscriminator',
-    'create_discriminator',
-    'LPIPSLoss',
+    "L2Loss",
+    "GANLoss",
+    "NLayerDiscriminator",
+    "UNetDiscriminator",
+    "create_discriminator",
+    "LPIPSLoss",
 ]

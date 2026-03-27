@@ -65,7 +65,12 @@ conda activate lpnsr
 pip install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
 
 # Install other dependencies
-pip install -r LPNSR/requirements.txt
+pip install -r requirements.txt
+
+# Linux/headless environments: remove the GUI OpenCV wheel that may be
+# installed transitively by basicsr/facexlib, then restore the headless wheel.
+pip uninstall -y opencv-python
+pip install --force-reinstall opencv-python-headless==4.12.0.88
 
 # Install xformers for acceleration
 pip install xformers==0.0.33.post2
@@ -73,7 +78,7 @@ pip install xformers==0.0.33.post2
 
 ## Pre-trained Models
 
-Download all pre-trained models from [腾讯微云](https://share.weiyun.com/2P35qGWJ) (the password is 'qdhijm') or [Huggingface](https://huggingface.co/mirpri/LPNSR),and place them in the `pretrained/` folder:
+Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpri/LPNSR) or [腾讯微云](https://share.weiyun.com/2P35qGWJ) (password: `qdhijm`), and place them in the `pretrained/` folder:
 
 | Model | Description |
 |-------|-------------|
@@ -88,20 +93,20 @@ Download all pre-trained models from [腾讯微云](https://share.weiyun.com/2P3
 
 Launch the Gradio demo:
 ```bash
-python LPNSR/app.py
+python app.py
 ```
 Then open `http://127.0.0.1:7860` in your browser.
 
 ### :rocket: Inference
 
 ```bash
-python LPNSR/inference.py -i [image folder/image path] -o [output folder]
+python inference.py -i [image folder/image path] -o [output folder]
 ```
 
 ### :test_tube: Testing
 
 ```bash
-python LPNSR/test.py --lq [lq image folder] --gt [gt image folder]
+python test.py --lq [lq image folder] --gt [gt image folder]
 ```
 
 **Note:** If only LQ images are provided (without GT reference images), only no-reference metrics will be computed.
@@ -117,22 +122,22 @@ python LPNSR/test.py --lq [lq image folder] --gt [gt image folder]
 ### :dolphin: Begin Training
 
 ```bash
-python LPNSR/train_noise_predictor.py --config LPNSR/configs/train_noise_predictor.yaml
+python train_noise_predictor.py --config configs/train_noise_predictor.yaml
 ```
 
 ### :whale: Resume from Interruption
 
 ```bash
-python train_noise_predictor.py --config LPNSRconfigs/train_noise_predictor.yaml --resume LPNSR/experiments/noise_predictor/checkpoints/check_point_xx.pth
+python train_noise_predictor.py --config LPNSRconfigs/train_noise_predictor.yaml --resume experiments/noise_predictor/checkpoints/check_point_xx.pth
 ```
 
 ## Reproducing the results in our paper
 ### :red_car: Prepare data
-Download datasets used in our paper [腾讯微云](https://share.weiyun.com/2P35qGWJ) (the password is 'qdhijm'),and place them in the `testdata/` folder
+Download datasets used in our paper from [Hugging Face](https://huggingface.co/datasets/mirpri/LPNSR) or [腾讯微云](https://share.weiyun.com/2P35qGWJ) (password: `qdhijm`), and place them in the `testdata/` folder
 
 ### :rocket: Begin Testing
 ```bash
-python LPNSR/test.py --lq [lq image folder] --gt [gt image folder]
+python test.py --lq [lq image folder] --gt [gt image folder]
 ```
 
 ## Acknowledgement

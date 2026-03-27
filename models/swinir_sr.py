@@ -2,10 +2,11 @@
 SwinIR super-resolution model wrapper for LPNSR
 """
 
+import os
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import os
+
 from .network_swinir import SwinIR as SwinIRNet
 
 
@@ -18,10 +19,10 @@ def create_swinir(
     embed_dim=180,
     num_heads=[6, 6, 6, 6, 6, 6],
     mlp_ratio=2,
-    upsampler='nearest+conv',
-    resi_connection='1conv',
+    upsampler="nearest+conv",
+    resi_connection="1conv",
     model_path=None,
-    device='cuda'
+    device="cuda",
 ):
     """
     创建SwinIR超分模型并加载预训练权重
@@ -54,23 +55,25 @@ def create_swinir(
         num_heads=num_heads,
         mlp_ratio=mlp_ratio,
         upsampler=upsampler,
-        resi_connection=resi_connection
+        resi_connection=resi_connection,
     )
 
     if model_path is not None and os.path.exists(model_path):
         print(f"Loading SwinIR weights from {model_path}")
-        pretrained_model = torch.load(model_path, map_location='cpu')
+        pretrained_model = torch.load(model_path, map_location="cpu")
 
         # 尝试加载不同的key名称
-        if 'params_ema' in pretrained_model:
-            model.load_state_dict(pretrained_model['params_ema'], strict=True)
-        elif 'params' in pretrained_model:
-            model.load_state_dict(pretrained_model['params'], strict=True)
+        if "params_ema" in pretrained_model:
+            model.load_state_dict(pretrained_model["params_ema"], strict=True)
+        elif "params" in pretrained_model:
+            model.load_state_dict(pretrained_model["params"], strict=True)
         else:
             model.load_state_dict(pretrained_model, strict=True)
         print("✓ SwinIR weights loaded successfully!")
     else:
-        print(f"Warning: SwinIR model path {model_path} not found, using random initialization")
+        print(
+            f"Warning: SwinIR model path {model_path} not found, using random initialization"
+        )
 
     model = model.to(device)
     model.eval()
@@ -83,6 +86,7 @@ class SwinIRWrapper(nn.Module):
     输入: [-1, 1]范围
     输出: [-1, 1]范围
     """
+
     def __init__(self, swinir_model):
         super().__init__()
         self.swinir_model = swinir_model
