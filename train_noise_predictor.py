@@ -32,7 +32,6 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-
 def get_named_eta_schedule(
     schedule_name,
     num_diffusion_timesteps,
@@ -487,7 +486,7 @@ class NoisePredictorTrainer:
             # Create discriminator
             self.discriminator = create_discriminator(
                 disc_type=loss_config.get("disc_type", "patch"),
-                input_nc=3,
+                input_nc=self.noise_predictor.in_channels,  # Latent space channels
                 ndf=loss_config.get("disc_ndf", 64),
                 n_layers=loss_config.get("disc_n_layers", 3),
                 norm_type=loss_config.get("disc_norm_type", "spectral"),
@@ -735,7 +734,6 @@ class NoisePredictorTrainer:
         # Note: pred_image needs to keep gradients so loss can backprop to noise predictor
         # VAE is frozen, but gradients can still flow through it back to final_pred_x0
         pred_image = self.vae.decode(final_pred_x0)  # [-1, 1], keep gradients
-        pred_image = torch.clamp(pred_image, -1, 1)
         pred_image = pred_image * 0.5 + 0.5  # [0, 1]
 
         gt_image = hr_image * 0.5 + 0.5  # [0, 1]
@@ -752,20 +750,20 @@ class NoisePredictorTrainer:
             loss_dict["lpips"] = lpips_val.item()
             total_loss += loss_config["lpips_weight"] * lpips_val
 
-        # GAN generator loss (image space)
+        # GAN generator loss (latent space)
         if self.gan_loss is not None and loss_config.get("gan_weight", 0) > 0:
             # Check if reached discriminator start epoch
             disc_start_epoch = loss_config.get("disc_start_epoch", 0)
             if self.current_epoch >= disc_start_epoch:
-                # Calculate generator loss: make discriminator believe generated image is real
-                fake_pred = self.discriminator(pred_image)
+                # Calculate generator loss in latent space: make discriminator believe generated latent is real
+                fake_pred = self.discriminator(final_pred_x0)
                 g_loss = self.gan_loss(fake_pred, target_is_real=True, is_disc=False)
                 loss_dict["g_loss"] = g_loss.item()
                 total_loss += loss_config["gan_weight"] * g_loss
 
-        # Save decoded image for discriminator training
-        self._pred_image_for_disc = pred_image.detach()
-        self._gt_image_for_disc = gt_image
+        # Save latent for discriminator training (latent space GAN)
+        self._pred_latent_for_disc = final_pred_x0.detach()
+        self._gt_latent_for_disc = z_start.detach()
 
         loss_dict["total"] = total_loss.item()
 
@@ -906,12 +904,12 @@ class NoisePredictorTrainer:
             # === This step only updates discriminator ===
             disc_start_epoch = loss_config.get("disc_start_epoch", 0)
             if self.current_epoch >= disc_start_epoch:
-                # Get generator produced images (already saved in multi_step_training_loss)
-                if hasattr(self, "_pred_image_for_disc") and hasattr(
-                    self, "_gt_image_for_disc"
+                # Get generator produced latents (already saved in multi_step_training_loss)
+                if hasattr(self, "_pred_latent_for_disc") and hasattr(
+                    self, "_gt_latent_for_disc"
                 ):
-                    fake_image = self._pred_image_for_disc
-                    real_image = self._gt_image_for_disc
+                    fake_latent = self._pred_latent_for_disc
+                    real_latent = self._gt_latent_for_disc
 
                     self.discriminator.train()
 
@@ -922,14 +920,14 @@ class NoisePredictorTrainer:
                     # Calculate discriminator loss
                     if self.config["training"]["use_amp"]:
                         with autocast(device_type="cuda"):
-                            # Discriminate real images
-                            real_pred = self.discriminator(real_image)
+                            # Discriminate real latents
+                            real_pred = self.discriminator(real_latent)
                             d_loss_real = self.gan_loss(
                                 real_pred, target_is_real=True, is_disc=True
                             )
 
-                            # Discriminate generated images
-                            fake_pred = self.discriminator(fake_image)
+                            # Discriminate generated latents
+                            fake_pred = self.discriminator(fake_latent)
                             d_loss_fake = self.gan_loss(
                                 fake_pred, target_is_real=False, is_disc=True
                             )
@@ -949,14 +947,14 @@ class NoisePredictorTrainer:
                         self.scaler_d.update()
                         self.optimizer_d.zero_grad()
                     else:
-                        # Discriminate real images
-                        real_pred = self.discriminator(real_image)
+                        # Discriminate real latents
+                        real_pred = self.discriminator(real_latent)
                         d_loss_real = self.gan_loss(
                             real_pred, target_is_real=True, is_disc=True
                         )
 
-                        # Discriminate generated images
-                        fake_pred = self.discriminator(fake_image)
+                        # Discriminate generated latents
+                        fake_pred = self.discriminator(fake_latent)
                         d_loss_fake = self.gan_loss(
                             fake_pred, target_is_real=False, is_disc=True
                         )
