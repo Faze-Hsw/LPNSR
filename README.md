@@ -19,13 +19,6 @@ real-world datasets without any text-to-image priors.
 
 ---
 
-## Features
-
-- **Efficient Sampling**: Only 4 sampling steps required for high-quality super-resolution
-- **Noise Predictor**: Learn to predict optimal noise maps for partial diffusion initialization
-- **Real-world SR**: Handles complex real-world degradations
-- **SwinIR Integration**: Optional SwinIR refinement for enhanced details
-
 ## Visual Results
 
 <div align="left">
@@ -159,6 +152,7 @@ This project is based on:
 - [BasicSR](https://github.com/XPixelGroup/BasicSR) - Basic super-resolution toolbox
 - [SwinIR](https://github.com/JingyunLiang/SwinIR) - Swin Transformer for image super-resolution
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) - Degradation simulation
+Thanks for these awesome works.
 
 ## License
 
@@ -166,4 +160,4 @@ This project is licensed under the MIT License.
 
 ## Contact
 
-If you have any questions, please feel free to open an issue or contact the maintainer via `frozen2001@qq.com`.
+If you have any questions, please feel free to open an issue or contact the maintainer via `frozen2001@hust.edu.cn`.
