@@ -152,6 +152,7 @@ This project is based on:
 - [BasicSR](https://github.com/XPixelGroup/BasicSR) - Basic super-resolution toolbox
 - [SwinIR](https://github.com/JingyunLiang/SwinIR) - Swin Transformer for image super-resolution
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) - Degradation simulation
+
 Thanks for these awesome works.
 
 ## License
