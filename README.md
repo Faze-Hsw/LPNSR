@@ -92,6 +92,8 @@ Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpr
 | `noise_predictor.pth` | Trained noise predictor |
 | `003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth` | SwinIR for refinement |
 
+All the required weights can now be found in the Release of this repository.
+
 ## Quick Start
 
 ### :railway_car: Online Demo
