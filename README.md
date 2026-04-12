@@ -1,21 +1,13 @@
-# LPNSR: Prior-Enhanced Diffusion Image Super-Resolution via LR-Guided Noise Prediction
+# LPNSR: Optimal Noise-Guided Diffusion Image Super-Resolution Via Learnable Noise Prediction
 
 A diffusion-based image super-resolution method that learns to predict optimal noise maps for efficient sampling.
 
 ---
 
-> Diffusion-based image super-resolution (SR) suffers from a critical trade-off between inference efﬁ-
-ciency and reconstruction quality, especially in few-step sampling for practical deployment. While
-the residual-shifting diffusion framework ResShift achieves efﬁcient 4-step SR inference, it suffers
-from severe performance degradation due to unconstrained random noise in intermediate steps and
-naive initialization, leading to error accumulation and weak LR prior guidance. In this paper, we
-propose LPNSR, a prior-enhanced efﬁcient diffusion SR framework. We ﬁrst design an LR-guided
-multi-input-aware noise predictor to replace random Gaussian noise, embedding structural priors
-into the reverse process while fully preserving the efﬁcient residual-shifting mechanism. We fur-
-ther optimize the diffusion initialization with a high-quality pre-upsampling network to mitigate
-initial bias. With a compact 4-step trajectory, LPNSR can be optimized end-to-end. Extensive ex-
-periments show that LPNSR achieves state-of-the-art perceptual performance on both synthetic and
-real-world datasets without any text-to-image priors.
+> Diffusion-based image super-resolution (SR) aims to reconstruct high-resolution (HR) images from low-resolution (LR) observations, yet faces a fundamental trade-off between inference efficiency and reconstruction quality in limited-step sampling scenarios. 
+  A critical yet underexplored question is: what is the optimal noise to inject at each intermediate diffusion step? In this paper, we establish a theoretical framework that derives the closed-form analytical solution for optimal intermediate noise in diffusion models from a maximum likelihood estimation perspective, revealing a consistent conditional dependence structure that generalizes across diffusion paradigms. 
+  We instantiate this framework under the residual-shifting diffusion paradigm and accordingly design an LR-guided multi-input-aware noise predictor to replace random Gaussian noise.
+  We further mitigate initialization bias with a high-quality pre-upsampling network. The compact 4-step trajectory uniquely enables end-to-end optimization of the entire reverse chain, which is computationally prohibitive for conventional long-trajectory diffusion models. Extensive experiments demonstrate that LPNSR achieves state-of-the-art perceptual performance on both synthetic and real-world datasets, without relying on any large-scale text-to-image priors.
 
 ---
 
@@ -83,13 +75,13 @@ pip install xformers==0.0.33.post2
 
 ## Pre-trained Models
 
-Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpri/LPNSR) or [腾讯微云](https://share.weiyun.com/2P35qGWJ) (password: `qdhijm`), and place them in the `pretrained/` folder (or you can change the weights path in `configs/inference.yaml`) :
+Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpri/LPNSR) or [腾讯微云](https://share.weiyun.com/2P35qGWJ) (password: `qdhijm`), and place them in the `pretrained/` folder (you can change the weights path in `configs/inference.yaml`) :
 
-| Model | Description |
-|-------|-------------|
-| `autoencoder_vq_f4.pth` | VQGAN encoder/decoder (4x spatial compression) |
-| `resshift_realsrx4_s4_v3.pth` | Pre-trained ResShift UNet |
-| `noise_predictor.pth` | Trained noise predictor |
+| Model                                                 | Description |
+|-------------------------------------------------------|-------------|
+| `autoencoder_vq_f4.pth`                               | VQGAN encoder/decoder (4x spatial compression) |
+| `resshift_realsrx4_s4_v3.pth`                         | Pre-trained ResShift UNet |
+| `noise_predictor(v2).pth`                             | Trained noise predictor |
 | `003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth` | SwinIR for refinement |
 
 All the required weights can now be found in the Release of this repository.
