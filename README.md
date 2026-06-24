@@ -88,6 +88,8 @@ Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpr
 | `003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth` | SwinIR for refinement |
 
 All the required weights can now be found in the Release of this repository.
+Note: The baseline noise_predictor.pth is the exact model checkpoint used for the experiments presented in the paper. The v2 version computes GAN loss in the latent space, and achieves better generation quality.
+
 
 ## Quick Start
 
