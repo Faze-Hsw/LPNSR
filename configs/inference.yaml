@@ -1,5 +1,5 @@
 model:
-  noise_predictor_path: "pretrained/noise_predictor.pth"
+  noise_predictor_path: "pretrained/noise_predictor_v2.pth"
   resshift_path: "pretrained/resshift_realsrx4_s4_v3.pth"
   vae_path: "pretrained/autoencoder_vq_f4.pth"
 
