@@ -21,7 +21,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from ldm.models.autoencoder import VQModelTorch
 from models.noise_predictor import create_noise_predictor
-from models.swinir_sr import SwinIRWrapper, create_swinir
 from models.unet import UNetModelSwin
 
 
@@ -278,7 +277,6 @@ class NoisePredictorInference:
         self.use_noise_predictor = self.config["inference"].get(
             "use_noise_predictor", True
         )
-        self.use_swinir = self.config["inference"].get("use_swinir", True)
 
         # Initialize models
         self._init_models()
@@ -302,7 +300,6 @@ class NoisePredictorInference:
         print(
             f"  - Noise predictor: {'enabled' if self.use_noise_predictor else 'disabled'}"
         )
-        print(f"  - SwinIR SR: {'enabled' if self.swinir else 'disabled'}")
 
     def _resolve_device(self, requested_device):
         """Resolve runtime device with safe CUDA fallback."""
@@ -501,44 +498,6 @@ class NoisePredictorInference:
         for param in self.noise_predictor.parameters():
             param.requires_grad = False
         print("  ✓ Noise predictor loaded")
-
-        # 4. Load SwinIR SR model (optional)
-        self.swinir = None
-        if self.config["inference"].get("use_swinir", False):
-            print("  Loading SwinIR SR model...")
-            swinir_config = self.config["inference"].get("swinir", {})
-
-            # SwinIR model path
-            swinir_path_str = swinir_config.get(
-                "model_path",
-                self.config["model"].get(
-                    "swinir_path",
-                    "pretrained/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth",
-                ),
-            )
-            swinir_model_path = self.project_root / swinir_path_str
-
-            # Create SwinIR model
-            swinir_model = create_swinir(
-                upscale=self.scale_factor,
-                img_size=swinir_config.get("img_size", 64),
-                window_size=swinir_config.get("window_size", 8),
-                img_range=1.0,
-                depths=swinir_config.get("depths", [6, 6, 6, 6, 6, 6]),
-                embed_dim=swinir_config.get("embed_dim", 180),
-                num_heads=swinir_config.get("num_heads", [6, 6, 6, 6, 6, 6]),
-                mlp_ratio=swinir_config.get("mlp_ratio", 2),
-                upsampler=swinir_config.get("upsampler", "nearest+conv"),
-                resi_connection=swinir_config.get("resi_connection", "1conv"),
-                model_path=str(swinir_model_path),
-                device=self.device,
-            )
-
-            # Use wrapper to handle data range conversion
-            self.swinir = SwinIRWrapper(swinir_model)
-            print("  ✓ SwinIR SR model loaded")
-        else:
-            print("  SwinIR SR model not enabled")
 
     def _init_diffusion(self):
         """
@@ -786,18 +745,13 @@ class NoisePredictorInference:
             sr_tensor: SR image (B, C, H*sf, W*sf), [-1, 1], RGB
         """
 
-        # 1. Upsample LR image
-        if self.swinir is not None and self.use_swinir:
-            # Use SwinIR for super-resolution
-            lr_upsampled = self.swinir(lr_tensor)
-        else:
-            # Use bicubic interpolation
-            lr_upsampled = F.interpolate(
-                lr_tensor,
-                scale_factor=self.scale_factor,
-                mode="bicubic",
-                align_corners=False,
-            )
+        # 1. Upsample LR image with bicubic interpolation
+        lr_upsampled = F.interpolate(
+            lr_tensor,
+            scale_factor=self.scale_factor,
+            mode="bicubic",
+            align_corners=False,
+        )
 
         # 2. Encode to latent space
         with torch.no_grad():
@@ -1110,9 +1064,6 @@ def get_parser():
         action="store_true",
         help="Disable noise predictor, use random noise (original ResShift method)",
     )
-    parser.add_argument(
-        "--disable_swinir", action="store_true", help="Disable SwinIR SR model"
-    )
 
     return parser
 
@@ -1143,17 +1094,12 @@ def main():
     if args.disable_noise_predictor:
         inferencer.use_noise_predictor = False
 
-    if args.disable_swinir:
-        inferencer.use_swinir = False
-
     # Print final inference strategy
     print("\nInference strategy:")
     print(
         f"  - Intermediate sampling: {'Noise predictor' if inferencer.use_noise_predictor else 'Random Gaussian noise'}"
     )
-    print(
-        f"  - Upsampling: {'SwinIR' if inferencer.use_swinir else 'Bicubic interpolation'}"
-    )
+    print("  - Upsampling: Bicubic interpolation")
 
     # Execute inference
     inferencer.inference(args.input, args.output)

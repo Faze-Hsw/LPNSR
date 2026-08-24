@@ -51,7 +51,6 @@ inference:
   scale_factor: 4
 
   use_noise_predictor: true
-  use_swinir: true
 
   color_correction: true
 
@@ -67,14 +66,3 @@ inference:
 
   save_format: "png"
   rgb2bgr: true
-
-  swinir:
-    model_path: "pretrained/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth"
-    img_size: 64
-    window_size: 8
-    depths: [6, 6, 6, 6, 6, 6, 6, 6, 6]
-    embed_dim: 240
-    num_heads: [8, 8, 8, 8, 8, 8, 8, 8, 8]
-    mlp_ratio: 2
-    upsampler: "nearest+conv"
-    resi_connection: "3conv"

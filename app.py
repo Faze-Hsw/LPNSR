@@ -44,7 +44,7 @@ def initialize_inference(device="cuda", num_steps=4, color_correction=True):
 
 
 def process_image(
-    input_image, num_steps, color_correction, use_swinir, use_noise_predictor, seed
+    input_image, num_steps, color_correction, use_noise_predictor, seed
 ):
     """Process a single image for super-resolution"""
     global inference_engine
@@ -56,7 +56,6 @@ def process_image(
     # Update settings
     inference_engine.num_steps = num_steps
     inference_engine.color_correction = color_correction
-    inference_engine.use_swinir = use_swinir
     inference_engine.use_noise_predictor = use_noise_predictor
 
     # Convert seed to int
@@ -107,13 +106,11 @@ article = r"""
 📋 **Features**
 - High-quality 4x image super-resolution
 - Advanced noise prediction for better detail reconstruction
-- SwinIR-based super-resolution for high-quality baseline
 - Color correction for natural-looking results
 
 💡 **Tips**
 - Upload a low-resolution image to see the super-resolution result
 - Adjust the number of steps (1-4) for quality vs. speed trade-off
-- Enable SwinIR for better baseline quality
 - Enable color correction for natural colors
 
 ⚡ **Performance**
@@ -141,9 +138,6 @@ with gr.Blocks() as demo:
                     color_correction = gr.Checkbox(
                         value=True, label="Enable Color Correction"
                     )
-                    use_swinir = gr.Checkbox(
-                        value=True, label="Enable SwinIR Super-resolution"
-                    )
                     use_noise_predictor = gr.Checkbox(
                         value=True, label="Enable Noise Predictor"
                     )
@@ -162,7 +156,6 @@ with gr.Blocks() as demo:
                     input_image,
                     num_steps,
                     color_correction,
-                    use_swinir,
                     use_noise_predictor,
                     seed,
                 ],

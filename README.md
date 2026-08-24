@@ -85,7 +85,6 @@ Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpr
 | `autoencoder_vq_f4.pth`                               | VQGAN encoder/decoder (4x spatial compression) |
 | `resshift_realsrx4_s4_v3.pth`                         | Pre-trained ResShift UNet |
 | `noise_predictor(v2).pth`                             | Trained noise predictor |
-| `003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth` | SwinIR for refinement |
 
 All the required weights can now be found in the Release of this repository.
 Note: The baseline noise_predictor.pth is the exact model checkpoint used for the experiments presented in the paper. The v2 version computes GAN loss in the latent space, and achieves better generation quality.
@@ -149,7 +148,6 @@ python test.py --lq [lq image folder] --gt [gt image folder]
 This project is based on:
 - [ResShift](https://github.com/zsyOAOA/ResShift) - Efficient diffusion model for image SR
 - [BasicSR](https://github.com/XPixelGroup/BasicSR) - Basic super-resolution toolbox
-- [SwinIR](https://github.com/JingyunLiang/SwinIR) - Swin Transformer for image super-resolution
 - [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) - Degradation simulation
 
 Thanks for these awesome works.
