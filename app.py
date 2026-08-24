@@ -14,7 +14,7 @@ import torch
 # Add LPNSR to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from inference import NoisePredictorInference
+from infer import NoisePredictorInference
 
 # Global variable to store the inference engine
 inference_engine = None

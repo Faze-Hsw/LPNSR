@@ -103,7 +103,7 @@ Then open `http://127.0.0.1:7860` in your browser.
 ### :rocket: Inference
 
 ```bash
-python inference.py -i [image folder/image path] -o [output folder]
+python infer.py -i [image folder/image path] -o [output folder]
 ```
 
 ### :test_tube: Testing

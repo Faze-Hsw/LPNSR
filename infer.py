@@ -940,9 +940,6 @@ class NoisePredictorInference:
             sr_tensor = im_spliter.gather()
         else:
             # Direct processing
-            print(
-                f"  Direct processing (image space size: {lr_tensor.shape[3]}x{lr_tensor.shape[2]})"
-            )
             with context():
                 sr_tensor = self.sample_func(lr_tensor)
 
@@ -959,7 +956,6 @@ class NoisePredictorInference:
             )
             lr_upsampled_full = lr_upsampled_full * 0.5 + 0.5
             sr_tensor = self._color_correction(sr_tensor, lr_upsampled_full)
-            print("  ✓ Applied color correction to image")
 
         # Extra clamp to ensure [0, 1] range
         sr_tensor = torch.clamp(sr_tensor, 0, 1)
@@ -989,7 +985,7 @@ class NoisePredictorInference:
         # Create output directory
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Get image list
+        # Get image list (recursive search into subdirectories for folders)
         if input_path.is_file():
             image_paths = [input_path]
         else:
@@ -1003,21 +999,17 @@ class NoisePredictorInference:
                 "*.JPG",
                 "*.JPEG",
             ]:
-                image_paths.extend(input_path.glob(ext))
-            image_paths = sorted(image_paths)
-        image_paths = list(set(image_paths))
+                image_paths.extend(input_path.rglob(ext))
+            image_paths = sorted(set(image_paths))
         print(f"\nFound {len(image_paths)} images")
 
         # Process each image
-        for img_path in tqdm(image_paths, desc="Processing images"):
+        pbar = tqdm(image_paths, desc="Processing images")
+        for img_path in pbar:
             # Read image
             lr_image = cv2.imread(str(img_path))
             lr_image = cv2.cvtColor(lr_image, cv2.COLOR_BGR2RGB)
             lr_image = lr_image.astype(np.float32) / 255.0
-
-            print(
-                f"\nProcessing: {img_path.name} (size: {lr_image.shape[1]}x{lr_image.shape[0]})"
-            )
 
             # Super-resolution
             sr_image = self.process_single_image(lr_image)
@@ -1027,10 +1019,8 @@ class NoisePredictorInference:
             if self.config["inference"]["rgb2bgr"]:
                 sr_image = cv2.cvtColor(sr_image, cv2.COLOR_RGB2BGR)
 
-            output_file = output_path / f"{img_path.stem}_sr.png"
+            output_file = output_path / f"{img_path.stem}.png"
             cv2.imwrite(str(output_file), sr_image)
-
-            print(f"  ✓ Saved to: {output_file}")
 
         print(f"\n✓ All done! Results saved in: {output_path}")
 

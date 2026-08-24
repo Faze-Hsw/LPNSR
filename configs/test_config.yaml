@@ -10,17 +10,16 @@ metrics:
   calculate_psnr: true
   calculate_ssim: true
   calculate_lpips: true
+  calculate_dists: true
   calculate_niqe: true
-  calculate_pi: true
-  calculate_clipiqa: true
   calculate_musiq: true
+  calculate_maniqa: true
+  calculate_clipiqa: true
+  calculate_fid: true
 
-  crop_border: 4
   test_y_channel: true
 
   lpips_net: "alex"
-
-  use_pyiqa: true
 
 device: "cuda"
 
@@ -28,7 +27,6 @@ output:
   save_sr_images: true
   save_metrics_csv: true
   save_metrics_json: true
-  print_per_image: true
 
 seed: 12345
 
