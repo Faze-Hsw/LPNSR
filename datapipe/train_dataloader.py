@@ -189,8 +189,8 @@ class RealESRGANTrainDataset(Dataset):
         img_gt_out = result['gt'].squeeze(0)
         
         return {
-            'lq': img_lq,  # Low-quality image (after degradation)
-            'gt': img_gt_out,  # High-quality image (ground truth)
+            'lq': img_lq.detach(),  # Low-quality image (after degradation)
+            'gt': img_gt_out.detach(),  # High-quality image (ground truth)
             'lq_path': img_path,  # Image path (for debugging)
         }
 

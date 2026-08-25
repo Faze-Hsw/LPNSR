@@ -1,0 +1,66 @@
+experiment:
+  name: "resshift_unet"
+  save_dir: "experiments/resshift_unet"
+  save_freq: 1000
+  keep_last_n: 3
+
+resshift:
+  vae_path: "pretrained/autoencoder_vq_f4.pth"
+  # Set to a checkpoint to warm-start the UNet, or null to train from scratch.
+  unet_path: "pretrained/resshift_realsrx4_s4_v3.pth"
+
+training:
+  iterations: 100000
+  batch_size: 8
+  num_workers: 12
+  ema_rate: 0.999
+  gradient_accumulation_steps: 1
+
+  diffusion:
+    num_timesteps: 4
+    kappa: 2.0
+    eta_schedule: "exponential"
+    min_noise_level: 0.2
+    etas_end: 0.99
+    eta_power: 0.3
+    normalize_input: true
+    latent_flag: true
+
+  use_amp: true
+  use_gradient_checkpointing: false
+  gradient_clip: 1.0
+
+data:
+  train:
+    hr_dir: "traindata"
+    lr_dir: null
+    crop_size: 256
+    scale: 4
+    use_flip: true
+    use_rot: true
+    use_color_jitter: false
+
+degradation:
+  use_degradation: true
+  config_path: "configs/realesrgan_degradation.yaml"
+
+optimizer:
+  type: "AdamW"
+  lr: 5.0e-5
+  beta1: 0.9
+  beta2: 0.999
+  weight_decay: 0
+
+scheduler:
+  type: "none"
+
+validation:
+  enabled: true
+  lq_dir: "assets/validate_lq"
+  gt_dir: "assets/validate_gt"
+  scale: 4.0
+  max_images: 0           # 0 means validate all paired images
+
+hardware:
+  gpu_ids: [0]
+  distributed: false
