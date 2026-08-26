@@ -599,6 +599,10 @@ class ResShiftTrainer:
             self.resshift_unet.load_state_dict(orig_state)
         self.resshift_unet.train()
 
+        # Clean up old validation dirs (keep last N)
+        if self.keep_last_n > 0:
+            self._cleanup_old_validation()
+
     # ------------------------------------------------------------------
     # training loop
     # ------------------------------------------------------------------
@@ -740,6 +744,7 @@ class ResShiftTrainer:
             "ema_state": self.ema_state,
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict() if self.scheduler else None,
+            "scaler": self.scaler.state_dict() if self.scaler is not None else None,
             "config": self.config,
         }
         full_path = ckpt_dir / f"training_state_step{step}.pth"
@@ -766,6 +771,26 @@ class ResShiftTrainer:
                 f.unlink()
             print(f"  Removed old checkpoint: step {s}")
 
+    def _cleanup_old_validation(self):
+        """Keep only the most recent `keep_last_n` validation image dirs."""
+        import re
+        import shutil
+
+        val_root = self.exp_dir / "validation"
+        if not val_root.exists():
+            return
+        pattern = re.compile(r"step_(\d+)")
+        step_dirs = []
+        for d in val_root.iterdir():
+            if d.is_dir():
+                m = pattern.match(d.name)
+                if m:
+                    step_dirs.append((int(m.group(1)), d))
+        step_dirs.sort(key=lambda x: x[0], reverse=True)
+        for s, d in step_dirs[self.keep_last_n:]:
+            shutil.rmtree(d)
+            print(f"  Removed old validation dir: step {s}")
+
     def load_checkpoint(self, path):
         ck = torch.load(path, map_location=self.device)
         self.resshift_unet.load_state_dict(ck["unet"])
@@ -774,6 +799,9 @@ class ResShiftTrainer:
         self.optimizer.load_state_dict(ck["optimizer"])
         if self.scheduler and ck.get("scheduler"):
             self.scheduler.load_state_dict(ck["scheduler"])
+        # Restore AMP scaler state if it was saved (newer checkpoints).
+        if self.scaler is not None and ck.get("scaler") is not None:
+            self.scaler.load_state_dict(ck["scaler"])
         self.global_step = ck["step"]
         print(f"Resumed from {path}  step={self.global_step}")
 

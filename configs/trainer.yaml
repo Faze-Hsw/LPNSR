@@ -17,10 +17,10 @@ training:
   gradient_accumulation_steps: 1
 
   diffusion:
-    num_timesteps: 4
+    num_timesteps: 15
     kappa: 2.0
     eta_schedule: "exponential"
-    min_noise_level: 0.2
+    min_noise_level: 0.04
     etas_end: 0.99
     eta_power: 0.3
     normalize_input: true
