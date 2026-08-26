@@ -258,8 +258,10 @@ class UNetModelSwin(nn.Module):
         cond_lq=True,
         cond_mask=False,
         lq_size=256,
+        use_checkpoint=False,
     ):
         super().__init__()
+        self.use_checkpoint = use_checkpoint
 
         if isinstance(num_res_blocks, int):
             num_res_blocks = [
@@ -353,7 +355,7 @@ class UNetModelSwin(nn.Module):
                             drop=dropout,
                             attn_drop=0.0,
                             drop_path=0.0,
-                            use_checkpoint=False,
+                            use_checkpoint=self.use_checkpoint,
                             norm_layer=normalization,
                             patch_norm=patch_norm,
                         )
@@ -408,7 +410,7 @@ class UNetModelSwin(nn.Module):
                 drop=dropout,
                 attn_drop=0.0,
                 drop_path=0.0,
-                use_checkpoint=False,
+                use_checkpoint=self.use_checkpoint,
                 norm_layer=normalization,
                 patch_norm=patch_norm,
             ),
@@ -456,7 +458,7 @@ class UNetModelSwin(nn.Module):
                             drop=dropout,
                             attn_drop=0.0,
                             drop_path=0.0,
-                            use_checkpoint=False,
+                            use_checkpoint=self.use_checkpoint,
                             norm_layer=normalization,
                             patch_norm=patch_norm,
                         )

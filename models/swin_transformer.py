@@ -545,7 +545,7 @@ class BasicLayer(nn.Module):
         x = self.patch_embed(x)  # B x embed_dim x Ph x Pw
         for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, use_reentrant=False)
             else:
                 x = blk(x)
         x = self.patch_unembed(x)  # B x C x Ph x Pw

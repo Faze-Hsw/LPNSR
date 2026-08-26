@@ -80,7 +80,6 @@ validation:
   lq_dir: "assets/validate_lq"
   gt_dir: "assets/validate_gt"
   scale: 4.0
-  max_images: 0           # 0 means validate all paired images
 
 hardware:
   gpu_ids: [0]

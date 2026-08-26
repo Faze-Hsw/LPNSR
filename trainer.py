@@ -128,6 +128,10 @@ class ResShiftTrainer:
         self.accumulation_steps = self.config["training"].get(
             "gradient_accumulation_steps", 1
         )
+        self.gradient_clip = self.config["training"].get("gradient_clip", 0)
+        self.use_grad_ckpt = bool(
+            self.config["training"].get("use_gradient_checkpointing", False)
+        )
 
         # Validation (RFMSR style)
         self.val_enabled = self.config.get("validation", {}).get("enabled", False)
@@ -165,6 +169,9 @@ class ResShiftTrainer:
         # ---- 2) Denoiser UNet (trained from scratch) ----
         print("\nCreating denoiser UNet (from scratch)...")
         unet_cfg = dict(self.config["model_params"])
+        unet_cfg["use_checkpoint"] = bool(
+            self.config["training"].get("use_gradient_checkpointing", False)
+        )
         self.denoiser = UNetModelSwin(**unet_cfg).to(self.device)
 
         n_params = sum(p.numel() for p in self.denoiser.parameters())
@@ -441,7 +448,6 @@ class ResShiftTrainer:
         lq_dir = Path(val_cfg.get("lq_dir", "assets/validate_lq"))
         gt_dir = Path(val_cfg.get("gt_dir", "assets/validate_gt"))
         val_scale = val_cfg.get("scale", 4.0)
-        max_images = val_cfg.get("max_images", 0)
 
         out_dir = self.exp_dir / "validation" / f"step_{step:08d}"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -452,8 +458,6 @@ class ResShiftTrainer:
             gp = gt_dir / lp.name
             if gp.exists():
                 pairs.append((lp, gp))
-        if max_images > 0:
-            pairs = pairs[:max_images]
         total = len(pairs)
         if total == 0:
             print(f"[Val @ step {step}] No paired images found")
@@ -749,6 +753,76 @@ class ResShiftTrainer:
         self.global_step = ck["step"]
         print(f"Resumed from {path}  step={self.global_step}")
 
+    # ------------------------------------------------------------------
+    # config summary
+    # ------------------------------------------------------------------
+    def print_training_config(self):
+        """Print a consolidated summary of key training parameters."""
+        cfg = self.config
+        tc = cfg["training"]
+        dc = cfg["data"]["train"]
+        diff = tc["diffusion"]
+        opt = cfg["optimizer"]
+        sched = cfg.get("scheduler", {})
+        val = cfg.get("validation", {})
+        latent_size = dc["crop_size"] // 8  # SD2.1 f=8
+
+        line = "-" * 70
+        print("\n" + "=" * 70)
+        print("Training Configuration")
+        print("=" * 70)
+
+        print("Experiment:")
+        print(f"  exp_dir             : {self.exp_dir}")
+        print(f"  total_iters         : {self.total_iters}")
+        print(f"  save_freq           : {self.save_freq}")
+        print(f"  keep_last_n         : {self.keep_last_n}")
+
+        print(line)
+        print("Data:")
+        print(f"  batch_size          : {tc['batch_size']}")
+        print(f"  crop_size           : {dc['crop_size']} (latent {latent_size})")
+        print(f"  scale               : {dc['scale']}")
+        print(f"  num_workers         : {tc['num_workers']}")
+        print(f"  hr_dir              : {dc['hr_dir']}")
+
+        print(line)
+        print("Diffusion:")
+        print(f"  num_timesteps       : {diff['num_timesteps']}")
+        print(f"  kappa               : {diff['kappa']}")
+        print(f"  min_noise_level     : {diff['min_noise_level']}")
+        print(f"  etas_end            : {diff['etas_end']}")
+        print(f"  eta_power           : {diff.get('eta_power', 0.3)}")
+        print(f"  normalize_input     : {diff.get('normalize_input', True)}")
+        print(f"  latent_flag         : {diff.get('latent_flag', True)}")
+
+        print(line)
+        print("Optimizer:")
+        print(f"  type                : {opt['type']}")
+        print(f"  lr                  : {opt['lr']}")
+        print(f"  scheduler           : {sched.get('type', 'none')}")
+        print(f"  accumulation_steps  : {self.accumulation_steps}")
+        print(f"  gradient_clip       : {self.gradient_clip}")
+        print(f"  grad_checkpointing  : {self.use_grad_ckpt}")
+        print(f"  ema_rate            : {tc.get('ema_rate', 0.999)}")
+        print(f"  use_amp             : {self.use_amp}")
+
+        print(line)
+        print("Model:")
+        print(f"  vae                 : {cfg['resshift']['vae_path']}")
+        print(f"  vae_scaling_factor  : {self.vae_scale}")
+        n_params = sum(p.numel() for p in self.denoiser.parameters())
+        print(f"  denoiser_params     : {n_params / 1e6:.2f}M")
+
+        print(line)
+        print("Validation:")
+        print(f"  enabled             : {self.val_enabled}")
+        if self.val_enabled:
+            print(f"  lq_dir              : {val.get('lq_dir')}")
+            print(f"  gt_dir              : {val.get('gt_dir')}")
+
+        print("=" * 70 + "\n")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Train the ResShift denoising UNet (x0 prediction)")
@@ -764,6 +838,8 @@ def main():
     print("\n" + "=" * 70)
     print(f"Starting ResShift UNet training for {trainer.total_iters} iterations")
     print("=" * 70 + "\n")
+
+    trainer.print_training_config()
 
     trainer.train()
 
