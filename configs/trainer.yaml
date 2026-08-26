@@ -1,13 +1,34 @@
 experiment:
-  name: "resshift_unet"
-  save_dir: "experiments/resshift_unet"
+  name: "denoiser"
+  save_dir: "experiments/denoiser"
   save_freq: 1000
   keep_last_n: 3
 
 resshift:
-  vae_path: "pretrained/autoencoder_vq_f4.pth"
-  # Set to a checkpoint to warm-start the UNet, or null to train from scratch.
-  unet_path: "pretrained/resshift_realsrx4_s4_v3.pth"
+  vae_path: "pretrained/stable-diffusion-2-1-base"
+
+model_params:
+  image_size: 64
+  in_channels: 4
+  model_channels: 160
+  out_channels: 4
+  attention_resolutions: [64, 32, 16, 8]
+  channel_mult: [1, 2, 2, 4]
+  num_res_blocks: [2, 2, 2, 2]
+  num_head_channels: 32
+  use_scale_shift_norm: true
+  resblock_updown: false
+  swin_depth: 2
+  swin_embed_dim: 192
+  window_size: 8
+  mlp_ratio: 4
+  cond_lq: true
+  lq_size: 64
+  dropout: 0.0
+  use_fp16: false
+  conv_resample: true
+  dims: 2
+  patch_norm: false
 
 training:
   iterations: 100000
@@ -34,7 +55,7 @@ data:
   train:
     hr_dir: "traindata"
     lr_dir: null
-    crop_size: 256
+    crop_size: 512
     scale: 4
     use_flip: true
     use_rot: true

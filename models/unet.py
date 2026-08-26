@@ -295,10 +295,12 @@ class UNetModelSwin(nn.Module):
         # Feature extractor for processing low-quality image
         if cond_lq and lq_size == image_size:
             self.feature_extractor = nn.Identity()
-            base_chn = 4 if cond_mask else 3
+            # lq channel count matches x_t channel count (in_channels).
+            # This supports both 3-ch (VQGAN) and 4-ch (SD2.1) latents.
+            base_chn = in_channels
         else:
             feature_extractor = []
-            feature_chn = 4 if cond_mask else 3
+            feature_chn = in_channels
             base_chn = 16
             for ii in range(int(math.log(lq_size / image_size) / math.log(2))):
                 feature_extractor.append(nn.Conv2d(feature_chn, base_chn, 3, 1, 1))

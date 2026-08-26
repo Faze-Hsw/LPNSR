@@ -6,7 +6,7 @@ single-step diffusion objective, following the original ResShift training
 recipe (see ResShift/trainer.py + models/gaussian_diffusion.py).
 
 Key differences from `train_noise_predictor.py`:
-  - The ResShift UNet (self.resshift_unet) is TRAINED (not frozen).
+  - The ResShift UNet (self.denoiser) is TRAINED (not frozen).
   - The VQ-VAE is frozen and only used to encode/decode latents.
   - There is NO noise predictor / GAN / LPIPS stack; the objective is a pure
     MSE regression in latent space over the predicted clean latent x0.
@@ -52,7 +52,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from datapipe.train_dataloader import create_train_dataloader  # noqa: E402
-from ldm.models.autoencoder import VQModelTorch  # noqa: E402
+from diffusers import AutoencoderKL  # noqa: E402
 from models.unet import UNetModelSwin  # noqa: E402
 
 
@@ -151,82 +151,24 @@ class ResShiftTrainer:
         print("Initializing Models")
         print("=" * 70)
 
-        # ---- 1) VQ-VAE (frozen) ----
-        print("\nLoading VQVAE...")
+        # ---- 1) SD2.1 VAE (AutoencoderKL, frozen) ----
+        print("\nLoading SD2.1 VAE...")
         vae_path = self.config["resshift"]["vae_path"]
-        ddconfig = {
-            "double_z": False,
-            "z_channels": 3,
-            "resolution": 256,
-            "in_channels": 3,
-            "out_ch": 3,
-            "ch": 128,
-            "ch_mult": [1, 2, 4],
-            "num_res_blocks": 2,
-            "attn_resolutions": [],
-            "dropout": 0.0,
-            "padding_mode": "zeros",
-        }
-        self.vae = VQModelTorch(
-            ddconfig=ddconfig,
-            n_embed=8192,
-            embed_dim=3,
-            rank=8,
-            lora_alpha=1.0,
-            lora_tune_decoder=False,
-        ).to(self.device)
-
-        vae_ckpt = torch.load(vae_path, map_location=self.device)
-        state_dict = vae_ckpt.get("state_dict", vae_ckpt)
-        new_state_dict = self._strip_prefix(state_dict)
-        self.vae.load_state_dict(new_state_dict, strict=False)
+        self.vae = AutoencoderKL.from_pretrained(vae_path, subfolder="vae").to(self.device)
         self.vae.eval()
         for p in self.vae.parameters():
             p.requires_grad = False
+        self.vae_scale = self.vae.config.scaling_factor
         print(f"  VAE loaded: {vae_path}")
+        print(f"  scaling_factor: {self.vae_scale}")
 
-        # ---- 2) ResShift UNet (TRAINED) ----
-        print("\nLoading ResShift UNet (trainable)...")
-        unet_path = self.config["resshift"].get("unet_path", None)
-        crop_size = self.config["data"]["train"]["crop_size"]
-        latent_size = crop_size // 4  # VAE downsample factor
+        # ---- 2) Denoiser UNet (trained from scratch) ----
+        print("\nCreating denoiser UNet (from scratch)...")
+        unet_cfg = dict(self.config["model_params"])
+        self.denoiser = UNetModelSwin(**unet_cfg).to(self.device)
 
-        unet_cfg = {
-            "image_size": latent_size,
-            "in_channels": 3,
-            "model_channels": 160,
-            "out_channels": 3,
-            "attention_resolutions": [64, 32, 16, 8],
-            "channel_mult": [1, 2, 2, 4],
-            "num_res_blocks": [2, 2, 2, 2],
-            "num_head_channels": 32,
-            "use_scale_shift_norm": True,
-            "resblock_updown": False,
-            "swin_depth": 2,
-            "swin_embed_dim": 192,
-            "window_size": 8,
-            "mlp_ratio": 4,
-            "cond_lq": True,
-            "lq_size": latent_size,
-            "dropout": 0.0,
-            "use_fp16": False,
-            "conv_resample": True,
-            "dims": 2,
-            "patch_norm": False,
-        }
-        self.resshift_unet = UNetModelSwin(**unet_cfg).to(self.device)
-
-        if unet_path is not None and os.path.isfile(unet_path):
-            unet_ckpt = torch.load(unet_path, map_location=self.device)
-            state_dict = unet_ckpt.get("state_dict", unet_ckpt)
-            new_state_dict = self._strip_prefix(state_dict)
-            self.resshift_unet.load_state_dict(new_state_dict, strict=True)
-            print(f"  UNet initialized from: {unet_path}")
-        else:
-            print("  UNet initialized from scratch (random weights)")
-
-        n_params = sum(p.numel() for p in self.resshift_unet.parameters())
-        print(f"  UNet parameters: {n_params / 1e6:.2f}M")
+        n_params = sum(p.numel() for p in self.denoiser.parameters())
+        print(f"  Denoiser parameters: {n_params / 1e6:.2f}M")
 
         # ---- 3) ResShift diffusion schedule ----
         print("\nInitializing ResShift diffusion...")
@@ -265,18 +207,6 @@ class ResShiftTrainer:
         print(f"  num_timesteps = {self.num_timesteps}")
         print(f"  kappa         = {self.kappa}")
 
-    @staticmethod
-    def _strip_prefix(state_dict):
-        new_state_dict = {}
-        for key, value in state_dict.items():
-            nk = key
-            if nk.startswith("module._orig_mod."):
-                nk = nk.replace("module._orig_mod.", "")
-            elif nk.startswith("module."):
-                nk = nk.replace("module.", "")
-            new_state_dict[nk] = value
-        return new_state_dict
-
     # ------------------------------------------------------------------
     # optimizer / data / ema
     # ------------------------------------------------------------------
@@ -287,14 +217,14 @@ class ResShiftTrainer:
         opt_cfg = self.config["optimizer"]
         if opt_cfg["type"] == "AdamW":
             self.optimizer = torch.optim.AdamW(
-                self.resshift_unet.parameters(),
+                self.denoiser.parameters(),
                 lr=opt_cfg["lr"],
                 betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
                 weight_decay=opt_cfg.get("weight_decay", 0.0),
             )
         elif opt_cfg["type"] == "Adam":
             self.optimizer = torch.optim.Adam(
-                self.resshift_unet.parameters(),
+                self.denoiser.parameters(),
                 lr=opt_cfg["lr"],
                 betas=(opt_cfg["beta1"], opt_cfg["beta2"]),
                 weight_decay=opt_cfg.get("weight_decay", 0.0),
@@ -344,7 +274,7 @@ class ResShiftTrainer:
         if ema_rate > 0:
             self.ema_rate = ema_rate
             self.ema_state = OrderedDict(
-                {k: deepcopy(v.data) for k, v in self.resshift_unet.state_dict().items()}
+                {k: deepcopy(v.data) for k, v in self.denoiser.state_dict().items()}
             )
             self.ema_ignore_keys = [
                 k for k in self.ema_state if "running_" in k or "num_batches_tracked" in k
@@ -359,7 +289,7 @@ class ResShiftTrainer:
     def update_ema(self):
         if self.ema_state is None:
             return
-        src = self.resshift_unet.state_dict()
+        src = self.denoiser.state_dict()
         for k, v in self.ema_state.items():
             if k in self.ema_ignore_keys or not v.is_floating_point():
                 self.ema_state[k] = src[k].clone()
@@ -387,15 +317,28 @@ class ResShiftTrainer:
         return x / inputs_max
 
     # ------------------------------------------------------------------
+    # SD2.1 VAE encode/decode (official: sample + scaling_factor)
+    # ------------------------------------------------------------------
+    def vae_encode(self, img: torch.Tensor) -> torch.Tensor:
+        """Encode image [-1,1] -> latent, scaled by scaling_factor."""
+        return self.vae.encode(img.float()).latent_dist.sample() * self.vae_scale
+
+    def vae_decode(self, latent: torch.Tensor) -> torch.Tensor:
+        """Decode latent -> image [-1,1]."""
+        return self.vae.decode(latent / self.vae_scale).sample
+
+    # ------------------------------------------------------------------
     # core loss (single-step diffusion training, x0 prediction)
     # ------------------------------------------------------------------
-    def training_loss(self, z_start, z_y, lr_image):
+    def training_loss(self, z_start, z_y):
         """
         Standard single-step ResShift diffusion loss.
 
         Forward:  x_t = x_0 + eta_t * (y_0 - x_0) + kappa * sqrt(eta_t) * eps
         Target:   the UNet predicts the clean latent x_0 (START_X).
         Loss:     mean((x0_pred - x_0)^2), optionally weighted per timestep.
+        Note:     the UNet's lq condition is the LR latent (z_y), since SD2.1
+                  is f=8 and the LR image does NOT match the latent size.
         """
         bsz = z_start.shape[0]
         T = self.num_timesteps
@@ -410,9 +353,10 @@ class ResShiftTrainer:
         eps = torch.randn_like(z_start)
         x_t = z_start + eta_t * e_0 + self.kappa * sqrt_eta_t * eps
 
-        # Normalize input and predict x0 with the (trainable) UNet
+        # Normalize input and predict x0 with the (trainable) UNet.
+        # lq condition = LR latent (z_y), matching x_t's latent size.
         x_t_norm = self._scale_input(x_t, t)
-        x0_pred = self.resshift_unet(x_t_norm, t, lq=lr_image)
+        x0_pred = self.denoiser(x_t_norm, t, lq=z_y)
 
         # MSE regression toward the clean latent
         loss = torch.nn.functional.mse_loss(x0_pred, z_start)
@@ -433,8 +377,11 @@ class ResShiftTrainer:
         return mean, variance, log_variance
 
     @torch.no_grad()
-    def reverse_sampling(self, lr_latent, lr_image):
-        """ResShift reverse sampling (x0-prediction), matching infer.py."""
+    def reverse_sampling(self, lr_latent):
+        """ResShift reverse sampling (x0-prediction).
+
+        lq condition = lr_latent itself (the LR latent), matching x_t size.
+        """
         bsz = lr_latent.shape[0]
         # prior: x_T = y + kappa * sqrt(eta_T) * eps
         t_T = torch.full((bsz,), self.num_timesteps - 1, device=self.device, dtype=torch.long)
@@ -443,7 +390,7 @@ class ResShiftTrainer:
         for i in range(self.num_timesteps - 1, -1, -1):
             t = torch.full((bsz,), i, device=self.device, dtype=torch.long)
             x_t_norm = self._scale_input(x_t, t)
-            pred_x0 = self.resshift_unet(x_t_norm, t, lq=lr_image)
+            pred_x0 = self.denoiser(x_t_norm, t, lq=lr_latent)
             mean, _, log_variance = self._q_posterior_mean_variance(pred_x0, x_t, t)
             if i > 0:
                 noise = torch.randn_like(x_t)
@@ -480,15 +427,15 @@ class ResShiftTrainer:
     @torch.no_grad()
     def validate(self, step):
         """Validate: inference on validation LQ/GT pairs -> metrics -> save SR."""
-        self.resshift_unet.eval()
+        self.denoiser.eval()
 
         # Swap in EMA weights for validation
         orig_state = None
         if self.ema_state is not None:
             orig_state = OrderedDict(
-                {k: v.data.clone() for k, v in self.resshift_unet.state_dict().items()}
+                {k: v.data.clone() for k, v in self.denoiser.state_dict().items()}
             )
-            self.resshift_unet.load_state_dict(self.ema_state)
+            self.denoiser.load_state_dict(self.ema_state)
 
         val_cfg = self.config.get("validation", {})
         lq_dir = Path(val_cfg.get("lq_dir", "assets/validate_lq"))
@@ -511,8 +458,8 @@ class ResShiftTrainer:
         if total == 0:
             print(f"[Val @ step {step}] No paired images found")
             if orig_state is not None:
-                self.resshift_unet.load_state_dict(orig_state)
-            self.resshift_unet.train()
+                self.denoiser.load_state_dict(orig_state)
+            self.denoiser.train()
             return
 
         psnr_v, ssim_v, lpips_v, dists_v = [], [], [], []
@@ -528,20 +475,17 @@ class ResShiftTrainer:
             target = src.resize((exact_w, exact_h), Image.BICUBIC)
             ori_h, ori_w = target.size[1], target.size[0]
 
-            # Image-space LR (original, NOT upsampled) -> UNet's lq condition
-            lr_np = np.array(src).astype(np.float32) / 255.0
-            lr_image = torch.from_numpy(np.moveaxis(lr_np, 2, 0)).unsqueeze(0).to(self.device)
-
             # Upsampled LR -> VAE encode to latent
             im_np = np.array(target).astype(np.float32) / 255.0
             im_cond = torch.from_numpy(np.moveaxis(im_np, 2, 0)).unsqueeze(0).to(self.device)
-            z_lr = self.vae.encode(im_cond * 2.0 - 1.0)
+            z_lr = self.vae_encode(im_cond * 2.0 - 1.0)
 
-            # Reverse sampling: lq = original LR image (matches latent size)
-            sr_latent = self.reverse_sampling(z_lr, lr_image * 2.0 - 1.0)
+            # LR condition for UNet = the LR latent (z_lr), matching latent size.
+            # (SD2.1 is f=8, so the LR image [128] != latent [64]; use z_lr directly.)
+            sr_latent = self.reverse_sampling(z_lr)
 
             # VAE decode
-            sr_decoded = self.vae.decode(sr_latent)
+            sr_decoded = self.vae_decode(sr_latent)
             sr_decoded = torch.clamp((sr_decoded + 1.0) / 2.0, 0.0, 1.0)
             sr_decoded = sr_decoded[:, :, 0:ori_h, 0:ori_w]
 
@@ -596,8 +540,8 @@ class ResShiftTrainer:
         print(f"  SR saved to: {out_dir}\n")
 
         if orig_state is not None:
-            self.resshift_unet.load_state_dict(orig_state)
-        self.resshift_unet.train()
+            self.denoiser.load_state_dict(orig_state)
+        self.denoiser.train()
 
         # Clean up old validation dirs (keep last N)
         if self.keep_last_n > 0:
@@ -609,21 +553,21 @@ class ResShiftTrainer:
     def train_step(self, hr_images, lr_images):
         """Forward + backward. Loss is scaled by 1/accumulation_steps;
         the optimizer step is performed by the training loop."""
-        self.resshift_unet.train()
+        self.denoiser.train()
         with torch.no_grad():
             hr_norm = hr_images * 2.0 - 1.0
             lr_norm = lr_images * 2.0 - 1.0
-            z_start = self.vae.encode(hr_norm)
+            z_start = self.vae_encode(hr_norm)
 
             scale = self.config["data"]["train"]["scale"]
             lr_up = torch.nn.functional.interpolate(
                 lr_norm, scale_factor=scale, mode="bicubic", align_corners=False
             )
-            z_y = self.vae.encode(lr_up)
+            z_y = self.vae_encode(lr_up)
 
         ctx = autocast(device_type="cuda") if self.use_amp else torch.amp.autocast("cuda", enabled=False)
         with ctx:
-            loss, loss_dict = self.training_loss(z_start, z_y, lr_norm)
+            loss, loss_dict = self.training_loss(z_start, z_y)
 
         # Scale loss by 1/accumulation_steps (RFMSR style)
         loss_scale = 1.0 / self.accumulation_steps
@@ -638,7 +582,7 @@ class ResShiftTrainer:
 
     def train(self):
         """Iteration-based training loop with gradient accumulation (RFMSR style)."""
-        self.resshift_unet.train()
+        self.denoiser.train()
         grad_clip = self.config["training"].get("gradient_clip", 0)
         accum_steps = self.accumulation_steps
 
@@ -681,7 +625,7 @@ class ResShiftTrainer:
                         if self.use_amp:
                             self.scaler.unscale_(self.optimizer)
                         torch.nn.utils.clip_grad_norm_(
-                            self.resshift_unet.parameters(), grad_clip
+                            self.denoiser.parameters(), grad_clip
                         )
 
                     # Optimizer step
@@ -732,7 +676,7 @@ class ResShiftTrainer:
         ckpt_dir.mkdir(parents=True, exist_ok=True)
 
         weights = (
-            self.ema_state if self.ema_state is not None else self.resshift_unet.state_dict()
+            self.ema_state if self.ema_state is not None else self.denoiser.state_dict()
         )
         out_path = ckpt_dir / f"unet_step{step}.pth"
         torch.save(weights, out_path)
@@ -740,7 +684,7 @@ class ResShiftTrainer:
         full = {
             "step": step,
             "global_step": self.global_step,
-            "unet": self.resshift_unet.state_dict(),
+            "unet": self.denoiser.state_dict(),
             "ema_state": self.ema_state,
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict() if self.scheduler else None,
@@ -793,7 +737,7 @@ class ResShiftTrainer:
 
     def load_checkpoint(self, path):
         ck = torch.load(path, map_location=self.device)
-        self.resshift_unet.load_state_dict(ck["unet"])
+        self.denoiser.load_state_dict(ck["unet"])
         if ck.get("ema_state") is not None:
             self.ema_state = ck["ema_state"]
         self.optimizer.load_state_dict(ck["optimizer"])

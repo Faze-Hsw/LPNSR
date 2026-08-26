@@ -1,12 +1,11 @@
 """
 Noise predictor based on ResShift Swin-UNet architecture
-Input: intermediate state (z_t), UNet prediction (pred_x0), LR image (lq), timesteps
+Input: intermediate state (z_t), UNet prediction (pred_x0), LR latent (lq), timesteps
 Output: DiagonalGaussianDistribution (mean and logvar for probabilistic prediction)
 
-输入拼接: z_t (3ch) + pred_x0 (3ch) + lq特征 (base_chn) → 预测采样噪声
+输入拼接: z_t (C) + pred_x0 (C) + lq latent (C) → 预测采样噪声
 """
 
-import math
 from typing import Optional, Tuple
 
 import numpy as np
@@ -14,8 +13,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# Import basic operations from ldm modules
-from ldm.modules.diffusionmodules.openaimodel import (
+# Import basic operations from local models module (same ops as UNet)
+from models.basic_ops import (
     avg_pool_nd,
     conv_nd,
     linear,
@@ -431,29 +430,15 @@ class SwinUNetNoisePredictor(nn.Module):
             linear(time_embed_dim, time_embed_dim),
         )
 
-        # Feature extractor for LQ image
-        if cond_lq and lq_size == image_size:
-            self.feature_extractor = nn.Identity()
-            base_chn = 3
-        else:
-            feature_extractor = []
-            feature_chn = 3
-            base_chn = 16
-            num_down = int(math.log(lq_size / image_size) / math.log(2))
-            for _ in range(num_down):
-                feature_extractor.append(nn.Conv2d(feature_chn, base_chn, 3, 1, 1))
-                feature_extractor.append(nn.SiLU())
-                feature_extractor.append(
-                    Downsample(base_chn, True, out_channels=base_chn * 2)
-                )
-                base_chn *= 2
-                feature_chn = base_chn
-            self.feature_extractor = nn.Sequential(*feature_extractor)
+        # Feature extractor for LQ condition (now LR latent, same channels/size as z_t)
+        # LR latent matches the latent size, so no downsampling / channel change.
+        self.feature_extractor = nn.Identity()
+        base_chn = in_channels  # LR latent channel count == latent channels
 
         # Input blocks (encoder)
-        # 输入: z_t (3ch) + pred_x0 (3ch) + lr特征 (base_chn)
+        # 输入: z_t (C) + pred_x0 (C) + lr latent (C)
         ch = input_ch = int(channel_mult[0] * model_channels)
-        in_channels_total = in_channels * 2 + base_chn  # z_t + pred_x0 + lq特征
+        in_channels_total = in_channels * 2 + base_chn  # z_t + pred_x0 + lq latent
 
         self.input_blocks = nn.ModuleList(
             [
@@ -657,7 +642,7 @@ class SwinUNetNoisePredictor(nn.Module):
         Args:
             z_t: Intermediate state in latent space [B, C, H, W]
             pred_x0: UNet预测的x_0 [B, C, H, W]
-            lr_image: LR image in image space [-1, 1] [B, C, H_lr, W_lr]
+            lr_image: LR latent (VAE-encoded LR) [B, C, H, W], same size/channels as z_t
             timesteps: Current timestep [B]
             sample_posterior: If True and double_z=True, sample from distribution; otherwise return mode
             generator: Optional random generator for reproducible sampling
@@ -671,12 +656,10 @@ class SwinUNetNoisePredictor(nn.Module):
             self.dtype
         )
 
-        # Process LQ condition
+        # Process LQ condition (LR latent, already matches z_t size/channels)
         lq = self.feature_extractor(lr_image.type(self.dtype))
-        if lq.shape[2:] != z_t.shape[2:]:
-            lq = F.pixel_unshuffle(lq, 2)
 
-        # 拼接输入: z_t + pred_x0 + lq特征
+        # 拼接输入: z_t + pred_x0 + lq latent
         x = torch.cat([z_t, pred_x0, lq], dim=1)
 
         h = x.type(self.dtype)

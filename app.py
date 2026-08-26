@@ -29,7 +29,7 @@ def initialize_inference(device="cuda", num_steps=4, color_correction=True):
         device = "cpu"
 
     if inference_engine is None:
-        config_path = Path(__file__).parent / "configs" / "inference.yaml"
+        config_path = Path(__file__).parent / "configs" / "infer.yaml"
 
         # Create inference engine
         inference_engine = NoisePredictorInference(str(config_path), device=device)

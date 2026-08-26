@@ -1,19 +1,12 @@
 model:
-  noise_predictor_path: "pretrained/noise_predictor_v2.pth"
-  resshift_path: "pretrained/resshift_realsrx4_s4_v3.pth"
-  vae_path: "pretrained/autoencoder_vq_f4.pth"
+  denoiser_path: "pretrained/resshift_realsrx4_s4_v3.pth"
+  vae_path: "pretrained/stable-diffusion-2-1-base"
 
-vae:
-  lora:
-    rank: 8
-    alpha: 1.0
-    tune_decoder: false
-
-resshift_unet:
+model_params:
   image_size: 64
-  in_channels: 3
+  in_channels: 4
   model_channels: 160
-  out_channels: 3
+  out_channels: 4
   attention_resolutions: [64, 32, 16, 8]
   channel_mult: [1, 2, 2, 4]
   num_res_blocks: [2, 2, 2, 2]
@@ -32,32 +25,27 @@ resshift_unet:
   dims: 2
   patch_norm: false
 
-noise_predictor:
-  config_path: "configs/noise_predictor_config.yaml"
-
 diffusion:
-  num_timesteps: 4
+  num_timesteps: 15
   kappa: 2.0
   eta_schedule: "exponential"
   eta_power: 0.3
-  min_noise_level: 0.2
+  min_noise_level: 0.04
   etas_end: 0.99
   normalize_input: true
   latent_flag: true
   scale_factor: 1.0
 
 inference:
-  num_steps: 4
+  num_steps: 15
   scale_factor: 4
-
-  use_noise_predictor: true
 
   color_correction: true
 
   padding_offset: 64
 
-  chop_size: 256
-  chop_stride: 128
+  chop_size: 128
+  chop_stride: 64
   chop_bs: 1
 
   device: "cuda"

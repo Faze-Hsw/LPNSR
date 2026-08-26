@@ -19,8 +19,7 @@ from tqdm import tqdm
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from ldm.models.autoencoder import VQModelTorch
-from models.noise_predictor import create_noise_predictor
+from diffusers import AutoencoderKL
 from models.unet import UNetModelSwin
 
 
@@ -274,9 +273,6 @@ class NoisePredictorInference:
         self.chop_stride = self.config["inference"]["chop_stride"]
         self.chop_bs = self.config["inference"]["chop_bs"]
         self.use_amp = self.config["inference"]["use_amp"] and self.device == "cuda"
-        self.use_noise_predictor = self.config["inference"].get(
-            "use_noise_predictor", True
-        )
 
         # Initialize models
         self._init_models()
@@ -297,9 +293,6 @@ class NoisePredictorInference:
         print(
             f"  - Color correction: {'enabled' if self.color_correction else 'disabled'}"
         )
-        print(
-            f"  - Noise predictor: {'enabled' if self.use_noise_predictor else 'disabled'}"
-        )
 
     def _resolve_device(self, requested_device):
         """Resolve runtime device with safe CUDA fallback."""
@@ -312,91 +305,30 @@ class NoisePredictorInference:
         """Initialize models"""
         print("Loading models...")
 
-        # 1. Load VAE
-        print("  Loading VAE...")
-        vae_config = self.config["vae"]
-
-        # VAE model architecture parameters (must match pretrained weights)
-        ddconfig = {
-            "double_z": False,
-            "z_channels": 3,
-            "resolution": 256,
-            "in_channels": 3,
-            "out_ch": 3,
-            "ch": 128,
-            "ch_mult": [1, 2, 4],
-            "num_res_blocks": 2,
-            "attn_resolutions": [],
-            "dropout": 0.0,
-            "padding_mode": "zeros",
-        }
-
-        # Get LoRA parameters from config
-        lora_config = vae_config.get("lora", {})
-
-        self.vae = VQModelTorch(
-            ddconfig=ddconfig,
-            n_embed=8192,
-            embed_dim=3,
-            rank=lora_config.get("rank", 8),
-            lora_alpha=lora_config.get("alpha", 1.0),
-            lora_tune_decoder=lora_config.get("tune_decoder", False),
-        )
-
-        # Load pretrained weights
+        # 1. Load SD2.1 VAE (AutoencoderKL, frozen)
+        print("  Loading SD2.1 VAE...")
         vae_path = self.project_root / self.config["model"]["vae_path"]
-        vae_ckpt = torch.load(vae_path, map_location="cpu")
-
-        # Process state_dict format
-        if "state_dict" in vae_ckpt:
-            state_dict = vae_ckpt["state_dict"]
-        else:
-            state_dict = vae_ckpt
-
-        # Smart prefix handling: detect prefix format in checkpoint
-        first_key = list(state_dict.keys())[0]
-        has_module_prefix = first_key.startswith("module.")
-        has_orig_mod_prefix = "_orig_mod." in first_key
-
-        # Remove or add prefixes as needed
-        new_state_dict = {}
-        for key, value in state_dict.items():
-            new_key = key
-            if has_orig_mod_prefix:
-                new_key = new_key.replace("_orig_mod.", "")
-            if has_module_prefix:
-                new_key = new_key.replace("module.", "")
-            new_state_dict[new_key] = value
-
-        # Use strict=True to ensure all weights are loaded correctly
-        missing_keys, unexpected_keys = self.vae.load_state_dict(
-            new_state_dict, strict=False
-        )
-        if missing_keys:
-            print(f"  ⚠️ VAE missing keys: {missing_keys}")
-        if unexpected_keys:
-            print(f"  ⚠️ VAE unexpected keys: {unexpected_keys[:5]}...")  # Show first 5
-
-        self.vae = self.vae.to(self.device)
+        self.vae = AutoencoderKL.from_pretrained(vae_path, subfolder="vae").to(self.device)
         self.vae.eval()
         for param in self.vae.parameters():
             param.requires_grad = False
-        print("  ✓ VAE loaded")
+        self.vae_scale = self.vae.config.scaling_factor
+        print(f"  ✓ VAE loaded (scaling_factor={self.vae_scale})")
 
-        # 2. Load ResShift UNet
-        print("  Loading ResShift UNet...")
-        unet_config = self.config["resshift_unet"]
-        self.resshift_unet = UNetModelSwin(**unet_config)
+        # 2. Load denoiser UNet
+        print("  Loading denoiser UNet...")
+        unet_config = self.config["model_params"]
+        self.denoiser = UNetModelSwin(**unet_config)
 
         # Load pretrained weights
-        resshift_path = self.project_root / self.config["model"]["resshift_path"]
-        resshift_ckpt = torch.load(resshift_path, map_location="cpu")
+        denoiser_path = self.project_root / self.config["model"]["denoiser_path"]
+        denoiser_ckpt = torch.load(denoiser_path, map_location="cpu")
 
         # Process state_dict format
-        if "state_dict" in resshift_ckpt:
-            state_dict = resshift_ckpt["state_dict"]
+        if "state_dict" in denoiser_ckpt:
+            state_dict = denoiser_ckpt["state_dict"]
         else:
-            state_dict = resshift_ckpt
+            state_dict = denoiser_ckpt
 
         # Remove possible prefixes
         new_state_dict = {}
@@ -408,96 +340,12 @@ class NoisePredictorInference:
                 new_key = key.replace("module.", "")
             new_state_dict[new_key] = value
 
-        self.resshift_unet.load_state_dict(new_state_dict, strict=True)
-        self.resshift_unet = self.resshift_unet.to(self.device)
-        self.resshift_unet.eval()
-        for param in self.resshift_unet.parameters():
+        self.denoiser.load_state_dict(new_state_dict, strict=True)
+        self.denoiser = self.denoiser.to(self.device)
+        self.denoiser.eval()
+        for param in self.denoiser.parameters():
             param.requires_grad = False
-        print("  ✓ ResShift UNet loaded")
-
-        # 3. Load noise predictor
-        print("  Loading noise predictor...")
-        noise_predictor_config = self.config["noise_predictor"]
-
-        # Load config if config file path is specified
-        if "config_path" in noise_predictor_config:
-            noise_predictor_config_path = (
-                self.project_root / noise_predictor_config["config_path"]
-            )
-            with open(noise_predictor_config_path, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f)
-            self.noise_predictor = create_noise_predictor(
-                image_size=config.get("image_size", 64),
-                latent_channels=config["latent_channels"],
-                model_channels=config["model_channels"],
-                out_channels=config.get("out_channels", config["latent_channels"]),
-                channel_mult=tuple(config["channel_mult"]),
-                num_res_blocks=config["num_res_blocks"],
-                attention_resolutions=config.get(
-                    "attention_resolutions", [64, 32, 16, 8]
-                ),
-                dropout=config.get("dropout", 0.0),
-                conv_resample=config.get("conv_resample", True),
-                dims=config.get("dims", 2),
-                use_fp16=config.get("use_fp16", False),
-                num_heads=config.get("num_heads", -1),
-                num_head_channels=config.get("num_head_channels", 32),
-                use_scale_shift_norm=config.get("use_scale_shift_norm", True),
-                resblock_updown=config.get("resblock_updown", False),
-                swin_depth=config.get("swin_depth", 2),
-                swin_embed_dim=config.get("swin_embed_dim", 192),
-                window_size=config.get("window_size", 8),
-                mlp_ratio=config.get("mlp_ratio", 4.0),
-                patch_norm=config.get("patch_norm", False),
-                cond_lq=config.get("cond_lq", True),
-                lq_size=config.get("lq_size", 64),
-            )
-        else:
-            self.noise_predictor = create_noise_predictor(
-                image_size=noise_predictor_config.get("image_size", 64),
-                latent_channels=noise_predictor_config["latent_channels"],
-                model_channels=noise_predictor_config["model_channels"],
-                out_channels=noise_predictor_config.get(
-                    "out_channels", noise_predictor_config["latent_channels"]
-                ),
-                channel_mult=tuple(noise_predictor_config["channel_mult"]),
-                num_res_blocks=noise_predictor_config["num_res_blocks"],
-                attention_resolutions=noise_predictor_config.get(
-                    "attention_resolutions", [64, 32, 16, 8]
-                ),
-                dropout=noise_predictor_config.get("dropout", 0.0),
-                conv_resample=noise_predictor_config.get("conv_resample", True),
-                dims=noise_predictor_config.get("dims", 2),
-                use_fp16=noise_predictor_config.get("use_fp16", False),
-                num_heads=noise_predictor_config.get("num_heads", -1),
-                num_head_channels=noise_predictor_config.get("num_head_channels", 32),
-                use_scale_shift_norm=noise_predictor_config.get(
-                    "use_scale_shift_norm", True
-                ),
-                resblock_updown=noise_predictor_config.get("resblock_updown", False),
-                swin_depth=noise_predictor_config.get("swin_depth", 2),
-                swin_embed_dim=noise_predictor_config.get("swin_embed_dim", 192),
-                window_size=noise_predictor_config.get("window_size", 8),
-                mlp_ratio=noise_predictor_config.get("mlp_ratio", 4.0),
-                patch_norm=noise_predictor_config.get("patch_norm", False),
-                cond_lq=noise_predictor_config.get("cond_lq", True),
-                lq_size=noise_predictor_config.get("lq_size", 64),
-            )
-
-        # Load weights
-        noise_predictor_path = (
-            self.project_root / self.config["model"]["noise_predictor_path"]
-        )
-        noise_ckpt = torch.load(noise_predictor_path, map_location="cpu")
-        state_dict = noise_ckpt
-        print(f" Loading from {noise_predictor_path.name} (weights only)")
-
-        self.noise_predictor.load_state_dict(state_dict, strict=True)
-        self.noise_predictor = self.noise_predictor.to(self.device)
-        self.noise_predictor.eval()
-        for param in self.noise_predictor.parameters():
-            param.requires_grad = False
-        print("  ✓ Noise predictor loaded")
+        print("  ✓ Denoiser UNet loaded")
 
     def _init_diffusion(self):
         """
@@ -753,17 +601,16 @@ class NoisePredictorInference:
             align_corners=False,
         )
 
-        # 2. Encode to latent space
+        # 2. Encode to latent space (SD2.1: sample + scaling_factor)
         with torch.no_grad():
-            lr_latent = self.vae.encode(lr_upsampled)
+            lr_latent = self.vae.encode(lr_upsampled.float()).latent_dist.sample() * self.vae_scale
 
-        # 3. Reverse sampling
-        # Note: UNet's lq condition requires image-space LR, not latent-space
-        sr_latent = self.reverse_sampling(lr_latent, lr_tensor)
+        # 3. Reverse sampling (lq condition = LR latent, matching latent size)
+        sr_latent = self.reverse_sampling(lr_latent)
 
         # 4. Decode to image space
         with torch.no_grad():
-            sr_tensor = self.vae.decode(sr_latent)
+            sr_tensor = self.vae.decode(sr_latent / self.vae_scale).sample
 
         # 5. Clamp to valid range to prevent color overflow
         sr_tensor = torch.clamp(sr_tensor, -1.0, 1.0)
@@ -792,7 +639,7 @@ class NoisePredictorInference:
             + self._extract_into_tensor(self.kappa * self.sqrt_etas, t, y.shape) * noise
         )
 
-    def reverse_sampling(self, lr_latent, lr_image):
+    def reverse_sampling(self, lr_latent):
         """
         ResShift reverse sampling process (used during inference)
 
@@ -802,8 +649,8 @@ class NoisePredictorInference:
         so no timestep remapping is needed, directly use indices 0-3 as timesteps
 
         Args:
-            lr_latent: LR image latent representation y (already VAE encoded)
-            lr_image: Image-space LR image (used as UNet's lq condition)
+            lr_latent: LR image latent representation y (already VAE encoded).
+                       Also used as the UNet's lq condition (SD2.1 latent).
 
         Returns:
             x_0: Final SR latent representation
@@ -823,25 +670,16 @@ class NoisePredictorInference:
             # 1. Normalize input
             x_t_normalized = self._scale_input(x_t, t_tensor)
 
-            # 2. Use ResShift's UNet to predict x_0
-            # ResShift v3 is trained directly with 4 steps, so timestep is directly passed as i
-            pred_x0 = self.resshift_unet(x_t_normalized, t_tensor, lq=lr_image)
+            # 2. Use the denoiser to predict x_0 (lq = LR latent)
+            pred_x0 = self.denoiser(x_t_normalized, t_tensor, lq=lr_latent)
 
             # 3. Calculate ResShift posterior distribution
             mean, variance, log_variance = self.q_posterior_mean_variance(
                 pred_x0, x_t, t_tensor
             )
 
-            # 4. Generate noise
-            # Choose noise source for intermediate sampling based on use_noise_predictor
-            if self.use_noise_predictor:
-                # Use noise predictor to predict noise
-                noise = self.noise_predictor(
-                    x_t, pred_x0, lr_image, t_tensor, sample_posterior=True
-                )
-            else:
-                # Use random Gaussian noise
-                noise = torch.randn_like(x_t)
+            # 4. Generate random Gaussian noise
+            noise = torch.randn_like(x_t)
 
             # 5. Sample x_{t-1}: add noise when t>0, use mean directly when t=0
             nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
@@ -1037,7 +875,7 @@ def get_parser():
         "-c",
         "--config",
         type=str,
-        default="configs/inference.yaml",
+        default="configs/infer.yaml",
         help="Config file path",
     )
     parser.add_argument(
@@ -1048,11 +886,6 @@ def get_parser():
         type=int,
         default=None,
         help="Number of sampling steps (overrides config file)",
-    )
-    parser.add_argument(
-        "--disable_noise_predictor",
-        action="store_true",
-        help="Disable noise predictor, use random noise (original ResShift method)",
     )
 
     return parser
@@ -1080,15 +913,9 @@ def main():
         inferencer.num_steps = args.num_steps
         print(f"Sampling steps overridden to: {inferencer.num_steps}")
 
-    # Override noise mode
-    if args.disable_noise_predictor:
-        inferencer.use_noise_predictor = False
-
     # Print final inference strategy
     print("\nInference strategy:")
-    print(
-        f"  - Intermediate sampling: {'Noise predictor' if inferencer.use_noise_predictor else 'Random Gaussian noise'}"
-    )
+    print("  - Intermediate sampling: Random Gaussian noise")
     print("  - Upsampling: Bicubic interpolation")
 
     # Execute inference

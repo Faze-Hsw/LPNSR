@@ -6,7 +6,7 @@ experiment:
   save_interval: 1
 
 resshift:
-  vae_path: "pretrained/autoencoder_vq_f4.pth"
+  vae_path: "pretrained/stable-diffusion-2-1-base"
   unet_path: "pretrained/resshift_realsrx4_s4_v3.pth"
 
 noise_predictor:
@@ -19,16 +19,16 @@ training:
   ema_rate: 0.999
 
   diffusion:
-    num_timesteps: 4
+    num_timesteps: 15
     kappa: 2.0
     eta_schedule: "exponential"
-    min_noise_level: 0.2
+    min_noise_level: 0.04
     etas_end: 0.99
     eta_power: 0.3
     normalize_input: true
     latent_flag: true
 
-  sampling_steps: 4
+  sampling_steps: 15
 
   use_amp: true
   use_gradient_checkpointing: true
@@ -38,7 +38,7 @@ data:
   train:
     hr_dir: "traindata"
     lr_dir: null
-    crop_size: 256
+    crop_size: 512
     scale: 4
     use_flip: true
     use_rot: true

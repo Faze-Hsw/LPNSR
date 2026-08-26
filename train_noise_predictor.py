@@ -22,7 +22,7 @@ from tqdm import tqdm
 matplotlib.use("Agg")  # Use non-interactive backend, suitable for server environments
 
 from datapipe.train_dataloader import create_train_dataloader
-from ldm.models.autoencoder import VQModelTorch
+from diffusers import AutoencoderKL
 from losses.gan_loss import GANLoss, create_discriminator
 from losses.lpips_loss import LPIPSLoss
 from models.noise_predictor import create_noise_predictor
@@ -206,73 +206,29 @@ class NoisePredictorTrainer:
         print("Initializing Models")
         print("=" * 70)
 
-        # 1. Load VQVAE (frozen)
-        print("\nLoading VQVAE...")
+        # 1. Load SD2.1 VAE (frozen)
+        print("\nLoading SD2.1 VAE...")
         vae_path = self.config["resshift"]["vae_path"]
-
-        ddconfig = {
-            "double_z": False,
-            "z_channels": 3,
-            "resolution": 256,
-            "in_channels": 3,
-            "out_ch": 3,
-            "ch": 128,
-            "ch_mult": [1, 2, 4],
-            "num_res_blocks": 2,
-            "attn_resolutions": [],
-            "dropout": 0.0,
-            "padding_mode": "zeros",
-        }
-
-        lora_rank = 8
-        lora_alpha = 1.0
-        lora_tune_decoder = False
-
-        self.vae = VQModelTorch(
-            ddconfig=ddconfig,
-            n_embed=8192,
-            embed_dim=3,
-            rank=lora_rank,
-            lora_alpha=lora_alpha,
-            lora_tune_decoder=lora_tune_decoder,
-        ).to(self.device)
-
-        # Load pretrained weights
-        vae_ckpt = torch.load(vae_path, map_location=self.device)
-        if "state_dict" in vae_ckpt:
-            state_dict = vae_ckpt["state_dict"]
-        else:
-            state_dict = vae_ckpt
-
-        # Remove prefixes
-        new_state_dict = {}
-        for key, value in state_dict.items():
-            new_key = key
-            if key.startswith("module._orig_mod."):
-                new_key = key.replace("module._orig_mod.", "")
-            elif key.startswith("module."):
-                new_key = key.replace("module.", "")
-            new_state_dict[new_key] = value
-
-        self.vae.load_state_dict(new_state_dict, strict=False)
+        self.vae = AutoencoderKL.from_pretrained(vae_path, subfolder="vae").to(self.device)
         self.vae.eval()
         for param in self.vae.parameters():
             param.requires_grad = False
-        print(f"✓ VQVAE loaded: {vae_path}")
+        self.vae_scale = self.vae.config.scaling_factor
+        print(f"✓ VAE loaded: {vae_path} (scaling_factor={self.vae_scale})")
 
         # 2. Load ResShift UNet (frozen)
         print("\nLoading ResShift UNet...")
         unet_path = self.config["resshift"]["unet_path"]
 
         crop_size = self.config["data"]["train"]["crop_size"]
-        vae_downsample_factor = 4
+        vae_downsample_factor = 8
         latent_size = crop_size // vae_downsample_factor
 
         model_structure = {
             "image_size": latent_size,
-            "in_channels": 3,
+            "in_channels": 4,
             "model_channels": 160,
-            "out_channels": 3,
+            "out_channels": 4,
             "attention_resolutions": [64, 32, 16, 8],
             "channel_mult": [1, 2, 2, 4],
             "num_res_blocks": [2, 2, 2, 2],
@@ -296,7 +252,7 @@ class NoisePredictorTrainer:
             "patch_norm": False,
         }
 
-        self.resshift_unet = UNetModelSwin(**model_config).to(self.device)
+        self.denoiser = UNetModelSwin(**model_config).to(self.device)
 
         # Load pretrained weights
         unet_ckpt = torch.load(unet_path, map_location=self.device)
@@ -315,9 +271,9 @@ class NoisePredictorTrainer:
                 new_key = key.replace("module.", "")
             new_state_dict[new_key] = value
 
-        self.resshift_unet.load_state_dict(new_state_dict, strict=True)
-        self.resshift_unet.eval()
-        for param in self.resshift_unet.parameters():
+        self.denoiser.load_state_dict(new_state_dict, strict=True)
+        self.denoiser.eval()
+        for param in self.denoiser.parameters():
             param.requires_grad = False
         print(f"✓ ResShift UNet loaded: {unet_path}")
 
@@ -486,7 +442,7 @@ class NoisePredictorTrainer:
             # Create discriminator
             self.discriminator = create_discriminator(
                 disc_type=loss_config.get("disc_type", "patch"),
-                input_nc=self.noise_predictor.in_channels,  # Latent space channels
+                input_nc=self.noise_predictor.in_channels,  # Latent space channels (=4 for SD2.1)
                 ndf=loss_config.get("disc_ndf", 64),
                 n_layers=loss_config.get("disc_n_layers", 3),
                 norm_type=loss_config.get("disc_norm_type", "spectral"),
@@ -664,14 +620,13 @@ class NoisePredictorTrainer:
 
         return posterior_mean, posterior_variance, posterior_log_variance
 
-    def multi_step_training_loss(self, z_start, z_y, hr_image, lr_image):
+    def multi_step_training_loss(self, z_start, z_y, hr_image):
         """
         Multi-step training loss calculation
         Args:
             z_start: HR image latent representation z_0 [B, C, H, W]
-            z_y: LR image latent representation y [B, C, H, W]
+            z_y: LR image latent representation y [B, C, H, W] (also used as lq condition)
             hr_image: Original HR image [B, 3, H, W], for image space loss calculation
-            lr_image: Image-space LR image (used as UNet's lq condition)
 
         Returns:
             loss: Total loss
@@ -705,7 +660,7 @@ class NoisePredictorTrainer:
             x_t_normalized = self._scale_input(x_t, t_tensor)
 
             # 2.2 Use UNet to predict x_0 (keep gradients to let them flow back to noise predictor)
-            pred_x0 = self.resshift_unet(x_t_normalized, t_tensor, lq=lr_image)
+            pred_x0 = self.denoiser(x_t_normalized, t_tensor, lq=z_y)
 
             # 2.3 If not the last step, perform posterior sampling
             if i > 0:
@@ -716,7 +671,7 @@ class NoisePredictorTrainer:
 
                 # Use noise predictor to predict noise (needs gradient)
                 predicted_noise = self.noise_predictor(
-                    x_t, pred_x0, lr_image, t_tensor, sample_posterior=True
+                    x_t, pred_x0, z_y, t_tensor, sample_posterior=True
                 )
 
                 # Sample x_{t-1}
@@ -733,7 +688,7 @@ class NoisePredictorTrainer:
         # Decode to image space
         # Note: pred_image needs to keep gradients so loss can backprop to noise predictor
         # VAE is frozen, but gradients can still flow through it back to final_pred_x0
-        pred_image = self.vae.decode(final_pred_x0)  # [-1, 1], keep gradients
+        pred_image = self.vae.decode(final_pred_x0 / self.vae_scale).sample  # [-1, 1], keep gradients
         pred_image = pred_image * 0.5 + 0.5  # [0, 1]
 
         gt_image = hr_image * 0.5 + 0.5  # [0, 1]
@@ -872,7 +827,7 @@ class NoisePredictorTrainer:
             lr_images_norm = lr_images * 2.0 - 1.0
 
             # HR image direct encoding
-            z_start = self.vae.encode(hr_images_norm)
+            z_start = self.vae.encode(hr_images_norm.float()).latent_dist.sample() * self.vae_scale
 
             # LR image needs to be upsampled to HR size first, then encoded
             scale_factor = self.config["data"]["train"]["scale"]
@@ -882,17 +837,17 @@ class NoisePredictorTrainer:
                 mode="bicubic",
                 align_corners=False,
             )
-            z_y = self.vae.encode(lr_images_upsampled)
+            z_y = self.vae.encode(lr_images_upsampled.float()).latent_dist.sample() * self.vae_scale
 
         # 2. First calculate generator loss (always needed, to provide fake images for discriminator)
         if self.config["training"]["use_amp"]:
             with autocast(device_type="cuda"):
                 loss, loss_dict = self.multi_step_training_loss(
-                    z_start, z_y, hr_images_norm, lr_images_norm
+                    z_start, z_y, hr_images_norm
                 )
         else:
             loss, loss_dict = self.multi_step_training_loss(
-                z_start, z_y, hr_images_norm, lr_images_norm
+                z_start, z_y, hr_images_norm
             )
 
         # 3. True alternating training logic

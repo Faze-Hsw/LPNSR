@@ -78,7 +78,7 @@ pip install xformers==0.0.33.post2
 
 ## Pre-trained Models
 
-Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpri/LPNSR) or [腾讯微云](https://share.weiyun.com/2P35qGWJ) (password: `qdhijm`), and place them in the `pretrained/` folder (you can change the weights path in `configs/inference.yaml`) :
+Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpri/LPNSR) or [腾讯微云](https://share.weiyun.com/2P35qGWJ) (password: `qdhijm`), and place them in the `pretrained/` folder (you can change the weights path in `configs/infer.yaml`) :
 
 | Model                                                 | Description |
 |-------------------------------------------------------|-------------|
