@@ -78,8 +78,3 @@ scheduler:
 
   step_size: 50
   gamma: 0.5
-
-hardware:
-  gpu_ids: [0]
-  distributed: false
-  find_unused_parameters: false

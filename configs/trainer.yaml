@@ -31,11 +31,11 @@ model_params:
   patch_norm: false
 
 training:
-  iterations: 100000
-  batch_size: 8
+  iterations: 200000
+  batch_size: 4
   num_workers: 12
   ema_rate: 0.999
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 2
 
   diffusion:
     num_timesteps: 15
@@ -80,7 +80,3 @@ validation:
   lq_dir: "assets/validate_lq"
   gt_dir: "assets/validate_gt"
   scale: 4.0
-
-hardware:
-  gpu_ids: [0]
-  distributed: false
