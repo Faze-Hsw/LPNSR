@@ -1,5 +1,5 @@
 model:
-  denoiser_path: "pretrained/resshift_realsrx4_s4_v3.pth"
+  denoiser_path: "experiments/denoiser/checkpoints/denoiser_step200000.safetensors"
   vae_path: "pretrained/stable-diffusion-2-1-base"
 
 model_params:
@@ -34,7 +34,6 @@ diffusion:
   etas_end: 0.99
   normalize_input: true
   latent_flag: true
-  scale_factor: 1.0
 
 inference:
   num_steps: 15
@@ -52,5 +51,4 @@ inference:
   use_amp: true
   seed: 12345
 
-  save_format: "png"
   rgb2bgr: true

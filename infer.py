@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from diffusers import AutoencoderKL
 from models.unet import UNetModelSwin
+from safetensors.torch import load_file
 
 
 def get_named_eta_schedule(
@@ -320,9 +321,12 @@ class NoisePredictorInference:
         unet_config = self.config["model_params"]
         self.denoiser = UNetModelSwin(**unet_config)
 
-        # Load pretrained weights
+        # Load pretrained weights (safetensors preferred; .pth kept for legacy)
         denoiser_path = self.project_root / self.config["model"]["denoiser_path"]
-        denoiser_ckpt = torch.load(denoiser_path, map_location="cpu")
+        if str(denoiser_path).endswith(".safetensors"):
+            denoiser_ckpt = load_file(str(denoiser_path), device="cpu")
+        else:
+            denoiser_ckpt = torch.load(denoiser_path, map_location="cpu")
 
         # Process state_dict format
         if "state_dict" in denoiser_ckpt:

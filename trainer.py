@@ -32,6 +32,7 @@ os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 import numpy as np
 import torch
 import yaml
+from safetensors.torch import save_file
 from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
@@ -94,7 +95,7 @@ def get_named_eta_schedule(
 
 
 class ResShiftTrainer:
-    """Train the ResShift denoising UNet with the x0-prediction objective."""
+    """Train the ResShift denoiser with the x0-prediction objective."""
 
     def __init__(self, config_path: str):
         with open(config_path, "r", encoding="utf-8") as f:
@@ -167,7 +168,7 @@ class ResShiftTrainer:
         print(f"  scaling_factor: {self.vae_scale}")
 
         # ---- 2) Denoiser UNet (trained from scratch) ----
-        print("\nCreating denoiser UNet (from scratch)...")
+        print("\nCreating denoiser...")
         unet_cfg = dict(self.config["model_params"])
         unet_cfg["use_checkpoint"] = bool(
             self.config["training"].get("use_gradient_checkpointing", False)
@@ -682,8 +683,12 @@ class ResShiftTrainer:
         weights = (
             self.ema_state if self.ema_state is not None else self.denoiser.state_dict()
         )
-        out_path = ckpt_dir / f"unet_step{step}.pth"
-        torch.save(weights, out_path)
+        # safetensors only accepts plain, contiguous, non-shared tensors.
+        safeweight = {
+            k: v.detach().cpu().clone().contiguous() for k, v in weights.items()
+        }
+        out_path = ckpt_dir / f"denoiser_step{step}.safetensors"
+        save_file(safeweight, str(out_path))
 
         full = {
             "step": step,
@@ -706,7 +711,7 @@ class ResShiftTrainer:
     def _cleanup_old_checkpoints(self, ckpt_dir):
         import re
 
-        pattern = re.compile(r"(unet_step|training_state_step)(\d+)")
+        pattern = re.compile(r"(denoiser_step|training_state_step)(\d+)")
         ckpt_steps = {}
         for f in ckpt_dir.iterdir():
             m = pattern.match(f.name)
@@ -825,7 +830,7 @@ class ResShiftTrainer:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train the ResShift denoising UNet (x0 prediction)")
+    parser = argparse.ArgumentParser(description="Train the ResShift denoiser (x0 prediction)")
     parser.add_argument("--config", type=str, default="configs/trainer.yaml", help="Config file path")
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint path to resume")
     args = parser.parse_args()
@@ -836,7 +841,7 @@ def main():
         trainer.load_checkpoint(args.resume)
 
     print("\n" + "=" * 70)
-    print(f"Starting ResShift UNet training for {trainer.total_iters} iterations")
+    print(f"Starting denoiser training for {trainer.total_iters} iterations")
     print("=" * 70 + "\n")
 
     trainer.print_training_config()

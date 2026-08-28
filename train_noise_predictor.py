@@ -27,6 +27,7 @@ from losses.gan_loss import GANLoss, create_discriminator
 from losses.lpips_loss import LPIPSLoss
 from models.noise_predictor import create_noise_predictor
 from models.unet import UNetModelSwin
+from safetensors.torch import load_file
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
@@ -216,9 +217,9 @@ class NoisePredictorTrainer:
         self.vae_scale = self.vae.config.scaling_factor
         print(f"✓ VAE loaded: {vae_path} (scaling_factor={self.vae_scale})")
 
-        # 2. Load ResShift UNet (frozen)
-        print("\nLoading ResShift UNet...")
-        unet_path = self.config["resshift"]["unet_path"]
+        # 2. Load frozen denoiser (ResShift backbone)
+        print("\nLoading denoiser...")
+        denoiser_path = self.config["resshift"]["denoiser_path"]
 
         crop_size = self.config["data"]["train"]["crop_size"]
         vae_downsample_factor = 8
@@ -254,12 +255,15 @@ class NoisePredictorTrainer:
 
         self.denoiser = UNetModelSwin(**model_config).to(self.device)
 
-        # Load pretrained weights
-        unet_ckpt = torch.load(unet_path, map_location=self.device)
-        if "state_dict" in unet_ckpt:
-            state_dict = unet_ckpt["state_dict"]
+        # Load pretrained weights (safetensors preferred; .pth kept for legacy)
+        if str(denoiser_path).endswith(".safetensors"):
+            denoiser_ckpt = load_file(str(denoiser_path), device="cpu")
         else:
-            state_dict = unet_ckpt
+            denoiser_ckpt = torch.load(denoiser_path, map_location=self.device)
+        if "state_dict" in denoiser_ckpt:
+            state_dict = denoiser_ckpt["state_dict"]
+        else:
+            state_dict = denoiser_ckpt
 
         # Remove prefixes
         new_state_dict = {}
@@ -275,7 +279,7 @@ class NoisePredictorTrainer:
         self.denoiser.eval()
         for param in self.denoiser.parameters():
             param.requires_grad = False
-        print(f"✓ ResShift UNet loaded: {unet_path}")
+        print(f"✓ Denoiser loaded: {denoiser_path}")
 
         # 3. Initialize ResShift diffusion process parameters
         print("\nInitializing ResShift diffusion process...")

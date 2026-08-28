@@ -1,5 +1,4 @@
 experiment:
-  name: "denoiser"
   save_dir: "experiments/denoiser"
   save_freq: 1000
   keep_last_n: 3
@@ -32,8 +31,8 @@ model_params:
 
 training:
   iterations: 200000
-  batch_size: 4
-  num_workers: 12
+  batch_size: 8
+  num_workers: 8
   ema_rate: 0.999
   gradient_accumulation_steps: 2
 
@@ -48,18 +47,16 @@ training:
     latent_flag: true
 
   use_amp: true
-  use_gradient_checkpointing: false
+  use_gradient_checkpointing: true
   gradient_clip: 1.0
 
 data:
   train:
     hr_dir: "traindata"
-    lr_dir: null
     crop_size: 512
     scale: 4
     use_flip: true
     use_rot: true
-    use_color_jitter: false
 
 degradation:
   use_degradation: true

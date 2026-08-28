@@ -7,7 +7,7 @@ experiment:
 
 resshift:
   vae_path: "pretrained/stable-diffusion-2-1-base"
-  unet_path: "pretrained/resshift_realsrx4_s4_v3.pth"
+  denoiser_path: "experiments/denoiser/checkpoints/denoiser_step200000.safetensors"
 
 noise_predictor:
   config_path: "configs/noise_predictor_config.yaml"
@@ -15,7 +15,7 @@ noise_predictor:
 training:
   num_epochs: 50
   batch_size: 8
-  num_workers: 16
+  num_workers: 8
   ema_rate: 0.999
 
   diffusion:
