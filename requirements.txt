@@ -1,28 +1,28 @@
-# LPNSR dependencies
-# Python 3.10+ / CUDA GPU required.
-#
-# PyTorch with CUDA support must be installed FIRST, matching your CUDA version:
-#   pip install torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cu126
+# LPNSR dependencies.
+# PyTorch with CUDA support must be installed separately FIRST (it is
+# intentionally NOT listed here, so pip never replaces your CUDA build):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
-diffusers==0.25.0
-transformers==4.28.1
-huggingface_hub==0.25.0
-accelerate==1.14.0
-safetensors==0.8.0
+diffusers>=0.25.0
+transformers>=4.39            # tokenizers>=0.15 ships prebuilt cp312 wheels
+huggingface_hub>=0.25,<1.0    # hub 1.x breaks the transformers 4.x API
+accelerate
+safetensors>=0.4
 
-# degradation pipeline & training
-basicsr==1.4.2             
-numpy==1.26.4              
-opencv-python-headless==4.13.0.92
-scipy==1.15.3
-timm==1.0.27
+# degradation pipeline (basicsr provides DiffJPEG)
+basicsr==1.4.2                # last release; provides DiffJPEG
+numpy>=1.26,<2.0              # basicsr is incompatible with numpy>=2
+opencv-python-headless        # version resolved against the numpy constraint
+scipy
+timm
 
 # validation metrics
-lpips==0.1.4
-pyiqa==0.1.10
+lpips
+pyiqa
 
 # misc
-Pillow==10.4.0
-matplotlib==3.10.9
-PyYAML==6.0.2
-tqdm==4.68.2
+pillow
+matplotlib
+pyyaml
+tqdm
+requests
