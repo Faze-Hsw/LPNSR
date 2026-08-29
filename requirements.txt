@@ -9,10 +9,10 @@ huggingface_hub>=0.25,<1.0    # hub 1.x breaks the transformers 4.x API
 accelerate
 safetensors>=0.4
 
-# degradation pipeline (basicsr provides DiffJPEG)
-basicsr==1.4.2                # last release; provides DiffJPEG
-numpy>=1.26,<2.0              # basicsr is incompatible with numpy>=2
-opencv-python-headless        # version resolved against the numpy constraint
+# degradation pipeline
+basicsr==1.4.2                
+numpy>=1.26
+opencv-python-headless
 scipy
 timm
 
