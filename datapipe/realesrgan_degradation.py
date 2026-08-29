@@ -7,13 +7,26 @@ import cv2
 import math
 import numpy as np
 import random
+import sys
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as tv_F
 from torchvision import transforms
 import yaml
 from pathlib import Path
+from types import ModuleType
 from typing import Dict, List, Tuple, Optional
 from PIL import Image
+
+# ---- compatibility shim (same as RFMSR datapipe): basicsr's import chain
+# requires torchvision.transforms.functional_tensor, which was removed in
+# torchvision >= 0.17. Register a stub module mapping it to the current
+# torchvision.transforms.functional BEFORE basicsr is imported, otherwise
+# DiffJPEG cannot be loaded and JPEG degradation would be silently skipped.
+if 'torchvision.transforms.functional_tensor' not in sys.modules:
+    _ft = ModuleType('torchvision.transforms.functional_tensor')
+    _ft.rgb_to_grayscale = tv_F.rgb_to_grayscale
+    sys.modules['torchvision.transforms.functional_tensor'] = _ft
 
 
 
