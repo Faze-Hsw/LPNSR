@@ -25,6 +25,8 @@ if 'torchvision.transforms.functional_tensor' not in sys.modules:
     _ft.rgb_to_grayscale = tv_F.rgb_to_grayscale
     sys.modules['torchvision.transforms.functional_tensor'] = _ft
 
+from basicsr.utils import DiffJPEG  # noqa: E402  (must come after the shim)
+
 
 
 class RealESRGANDegradation:
@@ -493,25 +495,18 @@ class RealESRGANDegradation:
     
     def _jpeg_compress(self, img: torch.Tensor, quality: torch.Tensor) -> torch.Tensor:
         """
-        Simulate JPEG compression
-        
+        Simulate JPEG compression with DiffJPEG
+
         Args:
             img: Input image tensor
             quality: JPEG quality parameter
-        
+
         Returns:
             Compressed image
         """
-        # Here we use simplified JPEG compression simulation
-        # In practice, DiffJPEG library can be used
         if self.jpeger is None:
-            try:
-                from basicsr.utils import DiffJPEG
-                self.jpeger = DiffJPEG(differentiable=False)
-            except ImportError:
-                # If DiffJPEG is not available, use simple quantization simulation
-                return img
-        
+            self.jpeger = DiffJPEG(differentiable=False)
+
         return self.jpeger(img, quality=quality)
     
     def degrade(
