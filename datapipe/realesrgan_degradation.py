@@ -18,11 +18,8 @@ from types import ModuleType
 from typing import Dict, List, Tuple, Optional
 from PIL import Image
 
-# ---- compatibility shim (same as RFMSR datapipe): basicsr's import chain
-# requires torchvision.transforms.functional_tensor, which was removed in
-# torchvision >= 0.17. Register a stub module mapping it to the current
-# torchvision.transforms.functional BEFORE basicsr is imported, otherwise
-# DiffJPEG cannot be loaded and JPEG degradation would be silently skipped.
+# ---- compatibility: basicsr depends on torchvision.transforms.functional_tensor ----
+# torchvision >= 0.15 removed this module, need to create a compatibility shim
 if 'torchvision.transforms.functional_tensor' not in sys.modules:
     _ft = ModuleType('torchvision.transforms.functional_tensor')
     _ft.rgb_to_grayscale = tv_F.rgb_to_grayscale
