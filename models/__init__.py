@@ -1,6 +1,6 @@
 """
 SR Model Module
-Includes UNet-SwinTransformer network and Swin-UNet noise predictor for image super-resolution
+Includes UNet-SwinTransformer network for image super-resolution
 """
 
 from .unet import UNetModelSwin
@@ -13,17 +13,11 @@ from .basic_ops import (
     timestep_embedding,
 )
 from .swin_transformer import BasicLayer, SwinTransformerBlock
-from .noise_predictor import (
-    SwinUNetNoisePredictor,
-    create_noise_predictor,
-)
 
 __all__ = [
     'UNetModelSwin',
     'BasicLayer',
     'SwinTransformerBlock',
-    'SwinUNetNoisePredictor',
-    'create_noise_predictor',
     'conv_nd',
     'linear',
     'avg_pool_nd',

@@ -1,6 +1,8 @@
 model:
-  denoiser_path: "experiments/denoiser/checkpoints/denoiser_step200000.safetensors"
+  denoiser_path: "pretrained/denoiser_step100000.safetensors"
   vae_path: "pretrained/stable-diffusion-2-1-base"
+  # Optional mean-correction module; empty string disables it (pure ResShift sampling)
+  noise_predictor_path: ""
 
 model_params:
   image_size: 64
@@ -19,6 +21,31 @@ model_params:
   mlp_ratio: 4
   cond_lq: true
   lq_size: 64
+  dropout: 0.0
+  use_fp16: false
+  conv_resample: true
+  dims: 2
+  patch_norm: false
+
+# Noise predictor structure (must match training config)
+noise_predictor_params:
+  image_size: 64
+  in_channels: 8
+  model_channels: 96
+  out_channels: 4
+  attention_resolutions: [64, 32, 16, 8]
+  channel_mult: [1, 2, 2, 4]
+  num_res_blocks: [2, 2, 2, 2]
+  num_head_channels: 32
+  use_scale_shift_norm: true
+  resblock_updown: false
+  swin_depth: 2
+  swin_embed_dim: 192
+  window_size: 8
+  mlp_ratio: 4
+  cond_lq: true
+  lq_size: 64
+  lq_channels: 4
   dropout: 0.0
   use_fp16: false
   conv_resample: true

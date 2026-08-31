@@ -1,6 +1,6 @@
 experiment:
   save_dir: "experiments/denoiser"
-  save_freq: 1000
+  save_freq: 5000
   keep_last_n: 3
 
 resshift:
@@ -31,10 +31,10 @@ model_params:
 
 training:
   iterations: 200000
-  batch_size: 8
+  batch_size: 16
   num_workers: 8
   ema_rate: 0.999
-  gradient_accumulation_steps: 2
+  gradient_accumulation_steps: 1
 
   diffusion:
     num_timesteps: 15
@@ -47,7 +47,7 @@ training:
     latent_flag: true
 
   use_amp: true
-  use_gradient_checkpointing: true
+  use_gradient_checkpointing: false
   gradient_clip: 1.0
 
 data:
@@ -69,8 +69,12 @@ optimizer:
   beta2: 0.999
   weight_decay: 0
 
+# type: "none" = constant lr; CosineAnnealing uses min_lr; StepLR uses step_size/gamma
 scheduler:
   type: "none"
+  min_lr: 1.0e-5
+  step_size: 50000
+  gamma: 0.5
 
 validation:
   enabled: true

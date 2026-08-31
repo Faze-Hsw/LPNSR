@@ -231,6 +231,10 @@ class UNetModelSwin(nn.Module):
     :param cond_lq: Whether to condition on low-quality image
     :param cond_mask: Whether to condition on mask
     :param lq_size: Low-quality image size
+    :param lq_channels: Channel count of the lq condition. Defaults to
+        in_channels (original ResShift design: lq matches x_t channels).
+        Override when the main input carries extra channels (e.g. a noise
+        predictor consuming cat(x_t, pred_x0) while lq is the 4-ch LR latent).
     """
 
     def __init__(
@@ -258,6 +262,7 @@ class UNetModelSwin(nn.Module):
         cond_lq=True,
         cond_mask=False,
         lq_size=256,
+        lq_channels=None,
         use_checkpoint=False,
     ):
         super().__init__()
@@ -297,9 +302,10 @@ class UNetModelSwin(nn.Module):
         # Feature extractor for processing low-quality image
         if cond_lq and lq_size == image_size:
             self.feature_extractor = nn.Identity()
-            # lq channel count matches x_t channel count (in_channels).
-            # This supports both 3-ch (VQGAN) and 4-ch (SD2.1) latents.
-            base_chn = in_channels
+            # lq channel count defaults to x_t channel count (in_channels).
+            # Override via lq_channels when the main input carries extra
+            # channels (e.g. noise predictor: cat(x_t, pred_x0)).
+            base_chn = lq_channels if lq_channels is not None else in_channels
         else:
             feature_extractor = []
             feature_chn = in_channels

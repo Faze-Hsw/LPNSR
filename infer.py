@@ -351,6 +351,50 @@ class NoisePredictorInference:
             param.requires_grad = False
         print("  ✓ Denoiser UNet loaded")
 
+        # 3. Load noise predictor (optional mean-correction module)
+        # Structure from noise_predictor_params (must match training config).
+        noise_predictor_path = self.config["model"].get("noise_predictor_path", "")
+        if noise_predictor_path:
+            print("  Loading noise predictor...")
+            np_model_config = dict(self.config["noise_predictor_params"])
+            # Cross-model structural consistency (same checks as training):
+            # the predictor consumes cat(scale(x_t), pred_x0) and outputs a
+            # latent-space residual that is added back into the sampling chain.
+            assert np_model_config["image_size"] == unet_config["image_size"], (
+                "noise_predictor_params.image_size must match model_params.image_size"
+            )
+            assert np_model_config["in_channels"] == unet_config["in_channels"] * 2, (
+                "noise_predictor_params.in_channels must equal 2 * model_params.in_channels "
+                "(concat of scale(x_t) and pred_x0)"
+            )
+            assert np_model_config["out_channels"] == unet_config["out_channels"], (
+                "noise_predictor_params.out_channels must equal model_params.out_channels "
+                "(latent channels of the residual)"
+            )
+            assert np_model_config.get("lq_channels") == unet_config["in_channels"], (
+                "noise_predictor_params.lq_channels must equal model_params.in_channels "
+                "(the lq condition is the LR latent)"
+            )
+            np_model_config["use_checkpoint"] = False
+            self.noise_predictor = UNetModelSwin(**np_model_config)
+
+            np_path = self.project_root / noise_predictor_path
+            if str(np_path).endswith(".safetensors"):
+                np_ckpt = load_file(str(np_path), device="cpu")
+            else:
+                np_ckpt = torch.load(np_path, map_location="cpu")
+            if "state_dict" in np_ckpt:
+                np_ckpt = np_ckpt["state_dict"]
+            self.noise_predictor.load_state_dict(np_ckpt, strict=True)
+            self.noise_predictor = self.noise_predictor.to(self.device)
+            self.noise_predictor.eval()
+            for param in self.noise_predictor.parameters():
+                param.requires_grad = False
+            print(f"  ✓ Noise predictor loaded: {noise_predictor_path}")
+        else:
+            self.noise_predictor = None
+            print("  - Noise predictor disabled (pure ResShift sampling)")
+
     def _init_diffusion(self):
         """
         Initialize diffusion parameters
@@ -403,6 +447,16 @@ class NoisePredictorInference:
         self.posterior_mean_coef1[0] = 0.0
         self.posterior_mean_coef2[0] = 1.0  # When t=0, posterior mean is directly x_0
 
+        # Per-step weight for the noise-predictor mean correction (KL-optimal):
+        #   w_t = sqrt(alpha_t) / (kappa * sqrt(eta_t * eta_{t-1}))
+        # which equals (mu~_t - mu_theta_t) / sqrt(Sigma_t) under the ResShift
+        # posterior. t=0 has zero posterior variance (no noise term); store 0.0
+        # there to avoid division by zero (the term is masked anyway).
+        noise_step_weight = np.sqrt(self.alpha) / (
+            self.kappa * np.sqrt(self.etas * self.etas_prev)
+        )
+        noise_step_weight[0] = 0.0
+
         # Convert to tensors
         self.sqrt_etas = torch.from_numpy(self.sqrt_etas).float()
         self.etas = torch.from_numpy(self.etas).float()
@@ -417,6 +471,7 @@ class NoisePredictorInference:
         ).float()
         self.posterior_mean_coef1 = torch.from_numpy(self.posterior_mean_coef1).float()
         self.posterior_mean_coef2 = torch.from_numpy(self.posterior_mean_coef2).float()
+        self.noise_step_weight = torch.from_numpy(noise_step_weight).float()
 
         print("  ✓ Diffusion parameters initialized")
 
@@ -685,9 +740,28 @@ class NoisePredictorInference:
             # 4. Generate random Gaussian noise
             noise = torch.randn_like(x_t)
 
-            # 5. Sample x_{t-1}: add noise when t>0, use mean directly when t=0
+            # 5. Optional mean correction from the noise predictor:
+            #    r_pred estimates the denoiser's residual (x_0 - x'_0); scaled by the
+            #    per-step weight w_t it equals (mu~_t - mu_theta_t) / sqrt(Sigma_t),
+            #    i.e. the mean offset aligning the sampler with the true posterior.
+            correction = 0.0
+            if self.noise_predictor is not None:
+                # x_t uses the same _scale_input normalization as the denoiser
+                r_pred = self.noise_predictor(
+                    torch.cat([x_t_normalized, pred_x0], dim=1), t_tensor, lq=lr_latent
+                )
+                w_t = self._extract_into_tensor(
+                    self.noise_step_weight, t_tensor, x_t.shape
+                )
+                correction = w_t * r_pred
+
+            # 6. Sample x_{t-1}: mean + sqrt(Sigma_t) * (w_t * r + eps);
+            #    t=0 uses the mean directly (nonzero_mask = 0)
             nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
-            x_t = mean + nonzero_mask * torch.exp(0.5 * log_variance) * noise
+            x_t = (
+                mean
+                + nonzero_mask * torch.exp(0.5 * log_variance) * (correction + noise)
+            )
 
         return x_t
 
