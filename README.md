@@ -93,14 +93,6 @@ Note: The baseline noise_predictor.pth is the exact model checkpoint used for th
 
 ## Quick Start
 
-### :railway_car: Online Demo
-
-Launch the Gradio demo:
-```bash
-python app.py
-```
-Then open `http://127.0.0.1:7860` in your browser.
-
 ### :rocket: Inference
 
 ```bash
@@ -121,18 +113,18 @@ python test.py --lq [lq image folder] --gt [gt image folder]
 
 1. Create a folder named `traindata/` and put your training data in the `traindata/` folder (high-resolution images)
 2. Download the pre-trained models (see above)
-3. Adjust the configuration in `configs/train_noise_predictor.yaml`
+3. Adjust the configuration in `configs/trainer.yaml`
 
 ### :dolphin: Begin Training
 
 ```bash
-python train_noise_predictor.py --config configs/train_noise_predictor.yaml
+python trainer.py --config configs/trainer.yaml
 ```
 
 ### :whale: Resume from Interruption
 
 ```bash
-python train_noise_predictor.py --config LPNSRconfigs/train_noise_predictor.yaml --resume experiments/noise_predictor/checkpoints/check_point_xx.pth
+python trainer.py --config LPNSRconfigs/trainer.yaml --resume experiments/noise_predictor/checkpoints/training_state_stepXXXXX.pth
 ```
 
 ## Reproducing the results in our paper

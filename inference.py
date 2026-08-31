@@ -78,23 +78,6 @@ def get_named_eta_schedule(
     return sqrt_etas
 
 
-def space_timesteps(num_timesteps, sample_timesteps):
-    """
-    Create a list of timesteps for sampling (uniformly selected from the original diffusion process)
-
-    Args:
-        num_timesteps: Total number of steps in the original diffusion process
-        sample_timesteps: Number of steps to use during sampling
-
-    Returns:
-        use_timesteps: Set of selected timesteps
-    """
-    all_steps = [
-        int((num_timesteps / sample_timesteps) * x) for x in range(sample_timesteps)
-    ]
-    return set(all_steps)
-
-
 class ImageSpliterTh:
     """Image patch splitting class (using Gaussian weighted aggregation)"""
 
@@ -317,7 +300,6 @@ class NoisePredictorInference:
 
         # 1. Load VAE
         print("  Loading VAE...")
-        vae_config = self.config["vae"]
 
         # VAE model architecture parameters (must match pretrained weights)
         ddconfig = {
@@ -334,16 +316,12 @@ class NoisePredictorInference:
             "padding_mode": "zeros",
         }
 
-        # Get LoRA parameters from config
-        lora_config = vae_config.get("lora", {})
-
+        # No VQGAN LoRA fine-tuning: use the default (pure VQGAN) structure,
+        # which matches the pretrained weights
         self.vae = VQModelTorch(
             ddconfig=ddconfig,
             n_embed=8192,
             embed_dim=3,
-            rank=lora_config.get("rank", 8),
-            lora_alpha=lora_config.get("alpha", 1.0),
-            lora_tune_decoder=lora_config.get("tune_decoder", False),
         )
 
         # Load pretrained weights
@@ -487,12 +465,17 @@ class NoisePredictorInference:
                 lq_size=noise_predictor_config.get("lq_size", 64),
             )
 
-        # Load weights
+        # Load weights (safetensors = EMA weights saved by training; pth = torch checkpoint)
         noise_predictor_path = (
             self.project_root / self.config["model"]["noise_predictor_path"]
         )
-        noise_ckpt = torch.load(noise_predictor_path, map_location="cpu")
-        state_dict = noise_ckpt
+        if noise_predictor_path.suffix == ".safetensors":
+            from safetensors.torch import load_file
+
+            state_dict = load_file(str(noise_predictor_path))
+        else:
+            noise_ckpt = torch.load(noise_predictor_path, map_location="cpu")
+            state_dict = noise_ckpt
         print(f" Loading from {noise_predictor_path.name} (weights only)")
 
         self.noise_predictor.load_state_dict(state_dict, strict=True)
@@ -816,13 +799,12 @@ class NoisePredictorInference:
 
         return sr_tensor
 
-    def prior_sample(self, y, noise=None):
+    def prior_sample(self, y):
         """
         Sample from prior distribution, i.e., q(x_T|y) ~= N(x_T|y, κ²η_T)
 
         Args:
             y: Degraded image latent representation (lr_latent)
-            noise: Optional noise
 
         Returns:
             x_T: Initial sample
@@ -830,7 +812,7 @@ class NoisePredictorInference:
         # Use last timestep (i.e., num_steps-1, corresponding to original max timestep)
         t = torch.tensor([self.num_steps - 1] * y.shape[0], device=self.device).long()
 
-        # Use random Gaussian noise (original ResShift)
+        # Random Gaussian noise (original ResShift)
         noise = torch.randn_like(y)
 
         return (
@@ -883,7 +865,7 @@ class NoisePredictorInference:
             if self.use_noise_predictor:
                 # Use noise predictor to predict noise
                 noise = self.noise_predictor(
-                    x_t, pred_x0, lr_image, t_tensor, sample_posterior=True
+                    x_t_normalized, pred_x0, lr_image, t_tensor, sample_posterior=True
                 )
             else:
                 # Use random Gaussian noise
@@ -1073,7 +1055,7 @@ class NoisePredictorInference:
             if self.config["inference"]["rgb2bgr"]:
                 sr_image = cv2.cvtColor(sr_image, cv2.COLOR_RGB2BGR)
 
-            output_file = output_path / f"{img_path.stem}_sr.png"
+            output_file = output_path / f"{img_path.stem}.png"
             cv2.imwrite(str(output_file), sr_image)
 
             print(f"  ✓ Saved to: {output_file}")

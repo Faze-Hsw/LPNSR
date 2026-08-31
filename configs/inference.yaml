@@ -3,12 +3,6 @@ model:
   resshift_path: "pretrained/resshift_realsrx4_s4_v3.pth"
   vae_path: "pretrained/autoencoder_vq_f4.pth"
 
-vae:
-  lora:
-    rank: 8
-    alpha: 1.0
-    tune_decoder: false
-
 resshift_unet:
   image_size: 64
   in_channels: 3
@@ -44,7 +38,6 @@ diffusion:
   etas_end: 0.99
   normalize_input: true
   latent_flag: true
-  scale_factor: 1.0
 
 inference:
   num_steps: 4
@@ -57,15 +50,14 @@ inference:
 
   padding_offset: 64
 
-  chop_size: 256
-  chop_stride: 128
+  chop_size: 128
+  chop_stride: 64
   chop_bs: 1
 
   device: "cuda"
   use_amp: true
   seed: 12345
 
-  save_format: "png"
   rgb2bgr: true
 
   swinir:

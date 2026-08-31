@@ -1,0 +1,105 @@
+experiment:
+  save_dir: "experiments/noise_predictor"
+  save_freq: 5000
+  keep_last_n: 3
+
+resshift:
+  vae_path: "pretrained/autoencoder_vq_f4.pth"
+  unet_path: "pretrained/resshift_realsrx4_s4_v3.pth"
+
+resshift_unet:
+  image_size: 64
+  in_channels: 3
+  model_channels: 160
+  out_channels: 3
+  attention_resolutions: [64, 32, 16, 8]
+  channel_mult: [1, 2, 2, 4]
+  num_res_blocks: [2, 2, 2, 2]
+  num_head_channels: 32
+  use_scale_shift_norm: true
+  resblock_updown: false
+  swin_depth: 2
+  swin_embed_dim: 192
+  window_size: 8
+  mlp_ratio: 4
+  cond_lq: true
+  lq_size: 64
+  dropout: 0.0
+  use_fp16: false
+  conv_resample: true
+  dims: 2
+  patch_norm: false
+
+noise_predictor:
+  config_path: "configs/noise_predictor_config.yaml"
+
+training:
+  iterations: 200000
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  num_workers: 16
+  ema_rate: 0.999
+
+  diffusion:
+    num_timesteps: 4
+    kappa: 2.0
+    eta_schedule: "exponential"
+    min_noise_level: 0.2
+    etas_end: 0.99
+    eta_power: 0.3
+    normalize_input: true
+    latent_flag: true
+
+  use_amp: true
+  use_gradient_checkpointing: false
+  gradient_clip: 1.0
+
+data:
+  train:
+    hr_dir: "traindata"
+    crop_size: 256
+    scale: 4
+    use_flip: true
+    use_rot: true
+
+degradation:
+  use_degradation: true
+  config_path: "configs/realesrgan_degradation.yaml"
+
+loss:
+  l1_weight: 1.0
+
+  lpips_weight: 1.0
+  lpips_net_type: 'vgg'
+
+  gan_weight: 0.1
+  gan_type: 'hinge'
+  disc_type: 'patch'
+  disc_ndf: 64
+  disc_n_layers: 3
+  disc_norm_type: 'spectral'
+  disc_lr: 5.0e-5
+  disc_start_iter: 10000
+  disc_update_freq: 2
+
+optimizer:
+  type: "AdamW"
+  lr: 5.0e-5
+  beta1: 0.9
+  beta2: 0.999
+  weight_decay: 0
+
+scheduler:
+  type: "none"
+
+  min_lr: 1.0e-5
+
+  step_size: 50000
+  gamma: 0.5
+
+validation:
+  enabled: true
+  lq_dir: "assets/validate_lq"
+  gt_dir: "assets/validate_gt"
+  scale: 4.0
+  seed: 42

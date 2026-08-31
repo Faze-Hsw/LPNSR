@@ -7,13 +7,29 @@ Super-Resolution Model Test Script
 import argparse
 import csv
 import json
+import logging
 import os
+import subprocess
 import sys
+import warnings
 
 import cv2
 import numpy as np
 import torch
 import yaml
+
+# Suppress third-party deprecation noise (clip / timm, pulled in by pyiqa)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*pkg_resources.*")
+warnings.filterwarnings("ignore", message=".*timm.models.layers.*")
+
+# Suppress the "triton not found" noise emitted by torch.utils.flop_counter
+# and xformers (triggered by FID's InceptionV3 feature extraction).
+# The xformers warning is printed via the root logger, so we also raise the
+# root logger level to ERROR. This is safe for an evaluation script.
+logging.getLogger("torch.utils.flop_counter").setLevel(logging.ERROR)
+logging.getLogger("xformers").setLevel(logging.ERROR)
+logging.getLogger().setLevel(logging.ERROR)
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from collections import OrderedDict
@@ -27,13 +43,33 @@ sys.path.append(str(Path(__file__).parent.parent))
 from inference import NoisePredictorInference
 
 
+# ---------------------------------------------------------------------------
+# pyiqa and lpips are hard dependencies: auto-install if missing.
+# ---------------------------------------------------------------------------
+def _ensure_deps():
+    """Import pyiqa and lpips, auto-installing via pip if not available."""
+    for pkg in ("pyiqa", "lpips"):
+        try:
+            __import__(pkg)
+        except ImportError:
+            print(f"{pkg} not found, installing via pip ...")
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", pkg]
+            )
+
+
+_ensure_deps()
+import pyiqa
+
+
 class MetricsCalculator:
     """
     Metrics Calculator
 
-    Supported metrics:
-    - Full-reference metrics: PSNR, SSIM, LPIPS
-    - No-reference metrics: NIQE, PI, CLIP-IQA, MUSIQ
+    Metric definitions follow RFMSR's `utils/cal_metrics.py`:
+    - Full-reference metrics: PSNR (Y), SSIM (Y), LPIPS (Alex), DISTS
+    - No-reference metrics: NIQE, MUSIQ, MANIQA, CLIPIQA
+    - Dataset-level metric: FID
     """
 
     def __init__(self, config: dict, device: str = "cuda"):
@@ -46,10 +82,8 @@ class MetricsCalculator:
         """
         self.config = config
         self.device = device
-        self.use_pyiqa = config.get("use_pyiqa", True)
 
         # Metric parameters
-        self.crop_border = config.get("crop_border", 4)
         self.test_y_channel = config.get("test_y_channel", True)
         self.lpips_net = config.get("lpips_net", "alex")
 
@@ -57,138 +91,89 @@ class MetricsCalculator:
         self._init_metrics()
 
     def _init_metrics(self):
-        """Initialize various metric calculators"""
+        """Initialize metric calculators (pyiqa + lpips)."""
         self.metrics_enabled = {}
         self.metric_calculators = {}
 
-        # Check if pyiqa library is available
-        self.pyiqa_available = False
-        if self.use_pyiqa:
-            try:
-                import pyiqa
-
-                self.pyiqa_available = True
-                print("✓ pyiqa library available, using official implementation")
-            except ImportError:
-                print("⚠ pyiqa library not available, using built-in implementation")
-                print("  Recommended: pip install pyiqa")
-
-        # Initialize full-reference metrics
-        # PSNR
+        # ---- Full-reference metrics (pyiqa) ----
+        # PSNR / SSIM: Y-channel via pyiqa's test_y_channel + color_space.
         if self.config.get("calculate_psnr", True):
-            self.metrics_enabled["psnr"] = True
-            from metrics.psnr import PSNR
+            try:
+                self.metric_calculators["psnr"] = pyiqa.create_metric(
+                    "psnr",
+                    test_y_channel=self.test_y_channel,
+                    color_space="ycbcr",
+                    device=self.device,
+                )
+                self.metrics_enabled["psnr"] = True
+                print("  ✓ PSNR initialized (pyiqa, Y-channel)")
+            except Exception as e:
+                print(f"  ⚠ PSNR initialization failed: {e}")
 
-            self.metric_calculators["psnr"] = PSNR(
-                crop_border=self.crop_border, test_y_channel=self.test_y_channel
-            )
-            print("  ✓ PSNR initialized")
-
-        # SSIM
         if self.config.get("calculate_ssim", True):
-            self.metrics_enabled["ssim"] = True
-            from metrics.ssim import SSIM
+            try:
+                self.metric_calculators["ssim"] = pyiqa.create_metric(
+                    "ssim",
+                    test_y_channel=self.test_y_channel,
+                    color_space="ycbcr",
+                    device=self.device,
+                )
+                self.metrics_enabled["ssim"] = True
+                print("  ✓ SSIM initialized (pyiqa, Y-channel)")
+            except Exception as e:
+                print(f"  ⚠ SSIM initialization failed: {e}")
 
-            self.metric_calculators["ssim"] = SSIM(
-                crop_border=self.crop_border, test_y_channel=self.test_y_channel
-            )
-            print("  ✓ SSIM initialized")
+        if self.config.get("calculate_dists", True):
+            try:
+                self.metric_calculators["dists"] = pyiqa.create_metric(
+                    "dists", device=self.device
+                )
+                self.metrics_enabled["dists"] = True
+                print("  ✓ DISTS initialized (pyiqa)")
+            except Exception as e:
+                print(f"  ⚠ DISTS initialization failed: {e}")
 
-        # LPIPS
+        # ---- LPIPS (standalone lpips library, AlexNet, [-1,1] input) ----
         if self.config.get("calculate_lpips", True):
-            self.metrics_enabled["lpips"] = True
-            if self.pyiqa_available:
-                import pyiqa
+            try:
+                import lpips
 
-                self.metric_calculators["lpips"] = pyiqa.create_metric(
-                    "lpips", device=self.device, net=self.lpips_net
+                self.metric_calculators["lpips"] = lpips.LPIPS(
+                    net=self.lpips_net
+                ).to(self.device)
+                self.metrics_enabled["lpips"] = True
+                print(f"  ✓ LPIPS initialized (lpips, net={self.lpips_net})")
+            except Exception as e:
+                print(f"  ⚠ LPIPS initialization failed: {e}")
+
+        # ---- No-reference metrics (pyiqa, on SR only) ----
+        for key, name in [
+            ("niqe", "niqe"),
+            ("musiq", "musiq"),
+            ("maniqa", "maniqa"),
+            ("clipiqa", "clipiqa"),
+        ]:
+            if not self.config.get(f"calculate_{key}", True):
+                continue
+            try:
+                self.metric_calculators[key] = pyiqa.create_metric(
+                    name, device=self.device
                 )
-            else:
-                from metrics.lpips import LPIPS
+                self.metrics_enabled[key] = True
+                print(f"  ✓ {key.upper()} initialized (pyiqa)")
+            except Exception as e:
+                print(f"  ⚠ {key.upper()} initialization failed: {e}")
 
-                self.metric_calculators["lpips"] = LPIPS(
-                    net=self.lpips_net, use_gpu=(self.device == "cuda")
+        # ---- FID (dataset-level, initialized lazily) ----
+        if self.config.get("calculate_fid", True):
+            try:
+                self.metric_calculators["fid"] = pyiqa.create_metric(
+                    "fid", device=self.device
                 )
-            print(f"  ✓ LPIPS initialized (net={self.lpips_net})")
-
-        # Initialize no-reference metrics
-        # NIQE
-        if self.config.get("calculate_niqe", True):
-            self.metrics_enabled["niqe"] = True
-            if self.pyiqa_available:
-                import pyiqa
-
-                self.metric_calculators["niqe"] = pyiqa.create_metric(
-                    "niqe", device=self.device
-                )
-            else:
-                from metrics.niqe import NIQE
-
-                self.metric_calculators["niqe"] = NIQE(device=self.device)
-            print("  ✓ NIQE initialized")
-
-        # PI
-        if self.config.get("calculate_pi", True):
-            self.metrics_enabled["pi"] = True
-            if self.pyiqa_available:
-                try:
-                    import pyiqa
-
-                    self.metric_calculators["pi"] = pyiqa.create_metric(
-                        "pi", device=self.device
-                    )
-                except Exception as e:
-                    print(
-                        f"  ⚠ PI (pyiqa) initialization failed: {e}, using built-in implementation"
-                    )
-                    from metrics.pi import PI
-
-                    self.metric_calculators["pi"] = PI(device=self.device)
-            else:
-                from metrics.pi import PI
-
-                self.metric_calculators["pi"] = PI(device=self.device)
-            print("  ✓ PI initialized")
-
-        # CLIP-IQA
-        if self.config.get("calculate_clipiqa", True):
-            self.metrics_enabled["clipiqa"] = True
-            if self.pyiqa_available:
-                try:
-                    import pyiqa
-
-                    self.metric_calculators["clipiqa"] = pyiqa.create_metric(
-                        "clipiqa", device=self.device
-                    )
-                except Exception as e:
-                    print(f"  ⚠ CLIP-IQA (pyiqa) initialization failed: {e}")
-                    self.metrics_enabled["clipiqa"] = False
-            else:
-                from metrics.clipiqa import CLIPIQA
-
-                self.metric_calculators["clipiqa"] = CLIPIQA(device=self.device)
-            if self.metrics_enabled["clipiqa"]:
-                print("  ✓ CLIP-IQA initialized")
-
-        # MUSIQ
-        if self.config.get("calculate_musiq", True):
-            self.metrics_enabled["musiq"] = True
-            if self.pyiqa_available:
-                try:
-                    import pyiqa
-
-                    self.metric_calculators["musiq"] = pyiqa.create_metric(
-                        "musiq", device=self.device
-                    )
-                except Exception as e:
-                    print(f"  ⚠ MUSIQ (pyiqa) initialization failed: {e}")
-                    self.metrics_enabled["musiq"] = False
-            else:
-                from metrics.musiq import MUSIQ
-
-                self.metric_calculators["musiq"] = MUSIQ(device=self.device)
-            if self.metrics_enabled["musiq"]:
-                print("  ✓ MUSIQ initialized")
+                self.metrics_enabled["fid"] = True
+                print("  ✓ FID initialized (pyiqa)")
+            except Exception as e:
+                print(f"  ⚠ FID initialization failed: {e}")
 
     def _to_tensor(self, img: np.ndarray) -> torch.Tensor:
         """
@@ -210,6 +195,14 @@ class MetricsCalculator:
         img_tensor = img_tensor.unsqueeze(0).to(self.device)
         return img_tensor
 
+    def _call_metric(self, key: str, *args) -> float:
+        """Call a metric and return a scalar float."""
+        with torch.no_grad():
+            val = self.metric_calculators[key](*args)
+        if torch.is_tensor(val):
+            val = val.mean().item() if val.numel() > 1 else val.item()
+        return float(val)
+
     def calculate_fr_metrics(self, sr_img: np.ndarray, gt_img: np.ndarray) -> dict:
         """
         Calculate full-reference metrics
@@ -222,30 +215,35 @@ class MetricsCalculator:
             Metrics dictionary
         """
         results = {}
+        sr_tensor = self._to_tensor(sr_img)   # [1, 3, H, W], [0, 1], RGB
+        gt_tensor = self._to_tensor(gt_img)
 
-        # PSNR
-        if self.metrics_enabled.get("psnr", False):
-            psnr_val = self.metric_calculators["psnr"](sr_img, gt_img)
-            results["psnr"] = psnr_val
+        # PSNR / SSIM: pyiqa handles Y-channel conversion internally.
+        for key in ("psnr", "ssim"):
+            if self.metrics_enabled.get(key, False):
+                try:
+                    results[key] = self._call_metric(key, sr_tensor, gt_tensor)
+                except Exception as e:
+                    print(f"  ⚠ {key.upper()} calculation failed: {e}")
+                    results[key] = float("nan")
 
-        # SSIM
-        if self.metrics_enabled.get("ssim", False):
-            ssim_val = self.metric_calculators["ssim"](sr_img, gt_img)
-            results["ssim"] = ssim_val
-
-        # LPIPS
+        # LPIPS (standalone lpips library) expects [-1, 1] input.
         if self.metrics_enabled.get("lpips", False):
-            sr_tensor = self._to_tensor(sr_img)
-            gt_tensor = self._to_tensor(gt_img)
+            try:
+                gt_norm = (gt_tensor - 0.5) / 0.5
+                sr_norm = (sr_tensor - 0.5) / 0.5
+                results["lpips"] = self._call_metric("lpips", gt_norm, sr_norm)
+            except Exception as e:
+                print(f"  ⚠ LPIPS calculation failed: {e}")
+                results["lpips"] = float("nan")
 
-            with torch.no_grad():
-                if self.pyiqa_available:
-                    lpips_val = self.metric_calculators["lpips"](
-                        sr_tensor, gt_tensor
-                    ).item()
-                else:
-                    lpips_val = self.metric_calculators["lpips"](sr_tensor, gt_tensor)
-            results["lpips"] = lpips_val
+        # DISTS (pyiqa, full-reference).
+        if self.metrics_enabled.get("dists", False):
+            try:
+                results["dists"] = self._call_metric("dists", sr_tensor, gt_tensor)
+            except Exception as e:
+                print(f"  ⚠ DISTS calculation failed: {e}")
+                results["dists"] = float("nan")
 
         return results
 
@@ -262,59 +260,13 @@ class MetricsCalculator:
         results = {}
         sr_tensor = self._to_tensor(sr_img)
 
-        # NIQE
-        if self.metrics_enabled.get("niqe", False):
-            with torch.no_grad():
-                if self.pyiqa_available and hasattr(
-                    self.metric_calculators["niqe"], "__call__"
-                ):
-                    niqe_val = self.metric_calculators["niqe"](sr_tensor).item()
-                else:
-                    niqe_val = self.metric_calculators["niqe"](sr_img)
-            results["niqe"] = niqe_val
-
-        # PI
-        if self.metrics_enabled.get("pi", False):
-            with torch.no_grad():
+        for key in ("niqe", "musiq", "maniqa", "clipiqa"):
+            if self.metrics_enabled.get(key, False):
                 try:
-                    if self.pyiqa_available and hasattr(
-                        self.metric_calculators["pi"], "__call__"
-                    ):
-                        pi_val = self.metric_calculators["pi"](sr_tensor).item()
-                    else:
-                        pi_val = self.metric_calculators["pi"](sr_img)
-                    results["pi"] = pi_val
+                    results[key] = self._call_metric(key, sr_tensor)
                 except Exception as e:
-                    print(f"  ⚠ PI calculation failed: {e}")
-                    results["pi"] = float("nan")
-
-        # CLIP-IQA
-        if self.metrics_enabled.get("clipiqa", False):
-            with torch.no_grad():
-                try:
-                    if self.pyiqa_available:
-                        clipiqa_val = self.metric_calculators["clipiqa"](
-                            sr_tensor
-                        ).item()
-                    else:
-                        clipiqa_val = self.metric_calculators["clipiqa"](sr_img)
-                    results["clipiqa"] = clipiqa_val
-                except Exception as e:
-                    print(f"  ⚠ CLIP-IQA calculation failed: {e}")
-                    results["clipiqa"] = float("nan")
-
-        # MUSIQ
-        if self.metrics_enabled.get("musiq", False):
-            with torch.no_grad():
-                try:
-                    if self.pyiqa_available:
-                        musiq_val = self.metric_calculators["musiq"](sr_tensor).item()
-                    else:
-                        musiq_val = self.metric_calculators["musiq"](sr_img)
-                    results["musiq"] = musiq_val
-                except Exception as e:
-                    print(f"  ⚠ MUSIQ calculation failed: {e}")
-                    results["musiq"] = float("nan")
+                    print(f"  ⚠ {key.upper()} calculation failed: {e}")
+                    results[key] = float("nan")
 
         return results
 
@@ -341,6 +293,18 @@ class MetricsCalculator:
         results.update(nr_results)
 
         return results
+
+    def calculate_fid(self, sr_dir: str, gt_dir: str) -> float:
+        """Calculate dataset-level FID between SR and GT directories."""
+        if not self.metrics_enabled.get("fid", False):
+            return float("nan")
+        try:
+            with torch.no_grad():
+                fid = self.metric_calculators["fid"](sr_dir, gt_dir)
+            return float(fid)
+        except Exception as e:
+            print(f"  ⚠ FID calculation failed: {e}")
+            return float("nan")
 
 
 class SRTester:
@@ -390,7 +354,6 @@ class SRTester:
         self.save_sr_images = self.output_config.get("save_sr_images", True)
         self.save_metrics_csv = self.output_config.get("save_metrics_csv", True)
         self.save_metrics_json = self.output_config.get("save_metrics_json", True)
-        self.print_per_image = self.output_config.get("print_per_image", True)
 
         # Initialize inferencer
         print("\n" + "=" * 60)
@@ -438,7 +401,7 @@ class SRTester:
             "*.BMP",
         ]
 
-        # Get LQ images
+        # Get LQ images (flat, non-recursive)
         lq_paths = []
         for ext in extensions:
             lq_paths.extend(lq_folder.glob(ext))
@@ -447,49 +410,16 @@ class SRTester:
         if len(lq_paths) == 0:
             raise ValueError(f"No image files found in {lq_folder}")
 
-        # Match GT images
+        # Match GT images by exact filename (strict, flat).
         pairs = []
         if self.has_gt:
             gt_folder = Path(self.gt_folder)
             for lq_path in lq_paths:
-                # Try different matching methods
-                gt_path = None
-
-                # 1. Exact same filename
-                candidate = gt_folder / lq_path.name
-                if candidate.exists():
-                    gt_path = candidate
+                gt_path = gt_folder / lq_path.name
+                if gt_path.exists():
+                    pairs.append((lq_path, gt_path))
                 else:
-                    # 2. Remove suffix like _lq, _lr, x4, etc.
-                    stem = lq_path.stem
-                    for suffix in [
-                        "_lq",
-                        "_lr",
-                        "_LQ",
-                        "_LR",
-                        "x4",
-                        "x2",
-                        "_bicubic",
-                        "_LR4",
-                    ]:
-                        if stem.endswith(suffix):
-                            stem = stem[: -len(suffix)]
-                            break
-
-                    # Try different extensions
-                    for ext in [".png", ".jpg", ".jpeg", ".bmp"]:
-                        candidate = gt_folder / (stem + ext)
-                        if candidate.exists():
-                            gt_path = candidate
-                            break
-                        # Try adding _gt, _hr suffix
-                        for gt_suffix in ["_gt", "_hr", "_GT", "_HR"]:
-                            candidate = gt_folder / (stem + gt_suffix + ext)
-                            if candidate.exists():
-                                gt_path = candidate
-                                break
-
-                pairs.append((lq_path, gt_path))
+                    pairs.append((lq_path, None))
         else:
             pairs = [(lq_path, None) for lq_path in lq_paths]
 
@@ -545,16 +475,17 @@ class SRTester:
         all_results = []
 
         # Process each image
-        for lq_path, gt_path in tqdm(pairs, desc="Testing progress"):
+        pbar = tqdm(pairs, desc="Testing progress")
+        for lq_path, gt_path in pbar:
             result = OrderedDict()
             result["image_name"] = lq_path.name
 
             # Generate SR image
             sr_img = self._process_single_image(lq_path)
 
-            # Save SR image
+            # Save SR image (same filename as LQ, so it pairs with GT for FID)
             if self.save_sr_images:
-                sr_save_path = sr_output_folder / f"{lq_path.stem}_sr.png"
+                sr_save_path = sr_output_folder / f"{lq_path.stem}.png"
                 cv2.imwrite(str(sr_save_path), sr_img)
 
             # Load GT image
@@ -563,7 +494,7 @@ class SRTester:
                 gt_img = cv2.imread(str(gt_path))
                 # Ensure GT and SR have same size
                 if gt_img.shape[:2] != sr_img.shape[:2]:
-                    print(
+                    pbar.write(
                         f"  ⚠ Size mismatch: SR={sr_img.shape[:2]}, GT={gt_img.shape[:2]}, skipping full-reference metrics"
                     )
                     gt_img = None
@@ -571,13 +502,6 @@ class SRTester:
             # Calculate metrics
             metrics = self.metrics_calculator.calculate_all(sr_img, gt_img)
             result.update(metrics)
-
-            # Print per-image result
-            if self.print_per_image:
-                metrics_str = ", ".join(
-                    [f"{k}: {v:.4f}" for k, v in metrics.items() if not np.isnan(v)]
-                )
-                print(f"\n  {lq_path.name}: {metrics_str}")
 
             all_results.append(result)
 
@@ -600,11 +524,25 @@ class SRTester:
                 std = np.std(values)
                 print(f"  {key.upper():10s}: {avg_results[key]:.4f} ± {std:.4f}")
 
+        # FID is a dataset-level metric computed once over SR/GT directories.
+        if self.has_gt and self.save_sr_images:
+            fid_val = self.metrics_calculator.calculate_fid(
+                str(sr_output_folder), str(self.gt_folder)
+            )
+            if not np.isnan(fid_val):
+                avg_results["fid"] = fid_val
+                print(f"  {'FID':10s}: {fid_val:.4f}")
+
         # Save results to CSV
         if self.save_metrics_csv:
             csv_path = self.output_folder / "metrics.csv"
+            # fieldnames = per-image fields + dataset-level fields (e.g. fid)
+            fieldnames = list(all_results[0].keys())
+            for k in avg_results:
+                if k not in fieldnames:
+                    fieldnames.append(k)
             with open(csv_path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(all_results)
                 # Add average row
