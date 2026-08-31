@@ -28,3 +28,4 @@ venv/
 traindata/
 testdata/
 experiments/
+pretrained/
