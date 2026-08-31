@@ -164,10 +164,24 @@ class RealESRGANTrainDataset(Dataset):
             Dictionary containing 'lq' (low-quality image) and 'gt' (high-quality image)
             Both are torch.Tensor with shape [C, H, W] and value range [0, 1]
         """
-        # Load image
+        # Load image; on failure (corrupted/transient IO), skip to the next
+        # image instead of crashing the whole training run
+        img = None
+        attempts = 0
         img_path = self.image_paths[index]
-        img = self._load_image(img_path)
-        
+        while img is None:
+            try:
+                img = self._load_image(img_path)
+            except Exception as e:
+                attempts += 1
+                print(f"[WARN] Skipped unreadable image "
+                      f"(#{attempts} in this worker): {img_path} ({e})")
+                index = (index + 1) % len(self.image_paths)
+                img_path = self.image_paths[index]
+                if attempts >= len(self.image_paths):
+                    raise RuntimeError(
+                        "Every image in the dataset failed to load")
+
         # Random crop or pad to target size
         img_gt = self._random_crop_or_pad(img, self.gt_size)
         
@@ -189,8 +203,8 @@ class RealESRGANTrainDataset(Dataset):
         img_gt_out = result['gt'].squeeze(0)
         
         return {
-            'lq': img_lq,  # Low-quality image (after degradation)
-            'gt': img_gt_out,  # High-quality image (ground truth)
+            'lq': img_lq.detach(),  # Low-quality image (after degradation)
+            'gt': img_gt_out.detach(),  # High-quality image (ground truth)
             'lq_path': img_path,  # Image path (for debugging)
         }
 

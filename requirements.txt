@@ -1,16 +1,28 @@
-basicsr==1.3.1
-einops==0.8.2
-gradio==6.8.0
-loralib==0.1.2
-matplotlib==3.10.8
-numpy==2.2.0
-omegaconf==2.3.0
-opencv_python_headless==4.12.0.88
-Pillow==12.1.1
-pyiqa==0.1.14.1
-PyYAML==6.0.3
-scipy==1.15.1
-timm==1.0.25
-tqdm==4.67.1
-transformers==4.37.2
-# Note: PyTorch with CUDA support should be installed separately before other dependencies
+# LPNSR dependencies.
+# PyTorch with CUDA support must be installed separately FIRST (it is
+# intentionally NOT listed here, so pip never replaces your CUDA build):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+diffusers>=0.25.0
+transformers>=4.39            # tokenizers>=0.15 ships prebuilt cp312 wheels
+huggingface_hub>=0.25,<1.0    # hub 1.x breaks the transformers 4.x API
+accelerate
+safetensors>=0.4
+
+# degradation pipeline
+basicsr==1.4.2                
+numpy>=1.26
+opencv-python-headless
+scipy
+timm
+
+# validation metrics
+lpips
+pyiqa
+
+# misc
+pillow
+matplotlib
+pyyaml
+tqdm
+requests
