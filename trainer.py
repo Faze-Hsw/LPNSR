@@ -912,13 +912,18 @@ class NoisePredictorTrainer:
                         stepped = True
 
                 if stepped:
-                    # Update progress bar
-                    pbar.set_postfix(
-                        {
-                            "loss": f"{loss_dict['total']:.4f}",
-                            "lr": f"{self.optimizer.param_groups[0]['lr']:.2e}",
-                        }
-                    )
+                    # Update progress bar (per-loss breakdown)
+                    postfix = {}
+                    if "l1" in loss_dict:
+                        postfix["L1"] = f"{loss_dict['l1']:.4f}"
+                    if "lpips" in loss_dict:
+                        postfix["LPIPS"] = f"{loss_dict['lpips']:.4f}"
+                    if "g_loss" in loss_dict:
+                        postfix["G_GAN"] = f"{loss_dict['g_loss']:.4f}"
+                    if "d_loss" in loss_dict:
+                        postfix["D_GAN"] = f"{loss_dict['d_loss']:.4f}"
+                    postfix["lr"] = f"{self.optimizer.param_groups[0]['lr']:.2e}"
+                    pbar.set_postfix(postfix)
                     pbar.update(1)
 
                     # Per-iteration lr scheduling

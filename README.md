@@ -26,27 +26,27 @@ A diffusion-based image super-resolution method that learns to predict optimal n
     </tr>
     <tr>
       <td><img src="assets/RealSet80/oldphoto6.png" width="300"></td>
-      <td><img src="results/oldphoto6_sr.png" width="300"></td>
+      <td><img src="results/oldphoto6.png" width="300"></td>
     </tr>
     <tr>
       <td><img src="assets/RealSet80/Lincoln.png" width="300"></td>
-      <td><img src="results/Lincoln_sr.png" width="300"></td>
+      <td><img src="results/Lincoln.png" width="300"></td>
     </tr>
     <tr>
       <td><img src="assets/RealSet80/0003.jpg" width="300"></td>
-      <td><img src="results/0003_sr.png" width="300"></td>
+      <td><img src="results/0003.png" width="300"></td>
     </tr>
     <tr>
       <td><img src="assets/RealSet80/0014.jpg" width="300"></td>
-      <td><img src="results/0014_sr.png" width="300"></td>
+      <td><img src="results/0014.png" width="300"></td>
     </tr>
     <tr>
       <td><img src="assets/RealSet80/29.jpg" width="300"></td>
-      <td><img src="results/29_sr.png" width="300"></td>
+      <td><img src="results/29.png" width="300"></td>
     </tr>
     <tr>
       <td><img src="assets/RealSet80/0030.jpg" width="300"></td>
-      <td><img src="results/0030_sr.png" width="300"></td>
+      <td><img src="results/0030.png" width="300"></td>
     </tr>
   </table>
 </div>
@@ -84,8 +84,8 @@ Download all pre-trained models from [Hugging Face](https://huggingface.co/mirpr
 |-------------------------------------------------------|-------------|
 | `autoencoder_vq_f4.pth`                               | VQGAN encoder/decoder (4x spatial compression) |
 | `resshift_realsrx4_s4_v3.pth`                         | Pre-trained ResShift UNet |
-| `noise_predictor(v2).pth`                             | Trained noise predictor |
-| `003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth` | SwinIR for refinement |
+| `noise_predictor_v2.pth`                              | Trained noise predictor |
+| `noise_predictor_v3.safetensors`                      | Trained noise predictor (safetensors, used by `configs/inference.yaml`) |
 
 All the required weights can now be found in the Release of this repository.
 Note: The baseline noise_predictor.pth is the exact model checkpoint used for the experiments presented in the paper. The v2 version computes GAN loss in the latent space, and achieves better generation quality.
@@ -102,8 +102,10 @@ python inference.py -i [image folder/image path] -o [output folder]
 ### :test_tube: Testing
 
 ```bash
-python test.py --lq [lq image folder] --gt [gt image folder]
+python test.py --lq_folder [lq image folder] --gt_folder [gt image folder] --output_folder [output folder]
 ```
+
+Computes PSNR (Y), SSIM (Y), LPIPS, DISTS, NIQE, MUSIQ, MANIQA and CLIPIQA per image, plus dataset-level FID when GT images are provided. Metrics are saved to `metrics.csv` / `metrics.json` together with the SR images in the output folder.
 
 **Note:** If only LQ images are provided (without GT reference images), only no-reference metrics will be computed.
 
@@ -118,13 +120,15 @@ python test.py --lq [lq image folder] --gt [gt image folder]
 ### :dolphin: Begin Training
 
 ```bash
-python trainer.py --config configs/trainer.yaml
+python trainer.py
 ```
+
+Training is iteration-based (`training.iterations`, default 200000 optimizer steps). The noise predictor can be warm-started from a pretrained checkpoint via `noise_predictor.pretrained_path` in `configs/trainer.yaml` (set it to `null` to train from scratch). Validation on `assets/validate_lq` / `assets/validate_gt` (PSNR, SSIM, LPIPS, DISTS, NIQE, MUSIQ, MANIQA, CLIPIQA) runs automatically every `save_freq` steps.
 
 ### :whale: Resume from Interruption
 
 ```bash
-python trainer.py --config LPNSRconfigs/trainer.yaml --resume experiments/noise_predictor/checkpoints/training_state_stepXXXXX.pth
+python trainer.py --resume experiments/noise_predictor/checkpoints/training_state_stepXXXXX.pth
 ```
 
 ## Reproducing the results in our paper
@@ -133,7 +137,7 @@ Download datasets used in our paper from [Hugging Face](https://huggingface.co/d
 
 ### :rocket: Begin Testing
 ```bash
-python test.py --lq [lq image folder] --gt [gt image folder]
+python test.py --lq_folder [lq image folder] --gt_folder [gt image folder]
 ```
 
 ## Acknowledgement
