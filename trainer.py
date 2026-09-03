@@ -476,8 +476,8 @@ class NoisePredictorTrainer:
 
         loss_config = self.config["loss"]
 
-        # L1 loss (image space, no separate initialization needed, use F.l1_loss)
-        print(f"✓ L1 loss (weight: {loss_config.get('l1_weight', 1.0)})")
+        # L2 loss (latent space, no separate initialization needed, use F.mse_loss)
+        print(f"✓ L2 loss (weight: {loss_config.get('l2_weight', 1.0)})")
 
         # LPIPS perceptual loss
         if loss_config.get("lpips_weight", 0) > 0:
@@ -737,12 +737,12 @@ class NoisePredictorTrainer:
         loss_config = self.config["loss"]
         total_loss = 0.0
 
-        # L1 loss (latent space): regression toward the quantized HR latent
+        # L2 loss (latent space): regression toward the quantized HR latent
         # z_start (same target space as ResShift's latent reconstruction loss)
-        l1_weight = loss_config.get("l1_weight", 1.0)
-        l1_val = torch.nn.functional.l1_loss(final_pred_x0, z_start)
-        loss_dict["l1"] = l1_val.item()
-        total_loss += l1_weight * l1_val
+        l2_weight = loss_config.get("l2_weight", 1.0)
+        l2_val = torch.nn.functional.mse_loss(final_pred_x0, z_start)
+        loss_dict["l2"] = l2_val.item()
+        total_loss += l2_weight * l2_val
 
         # Decode to image space (for the perceptual loss only)
         # Note: pred_image needs to keep gradients so loss can backprop to noise predictor
@@ -914,8 +914,8 @@ class NoisePredictorTrainer:
                 if stepped:
                     # Update progress bar (per-loss breakdown)
                     postfix = {}
-                    if "l1" in loss_dict:
-                        postfix["L1"] = f"{loss_dict['l1']:.4f}"
+                    if "l2" in loss_dict:
+                        postfix["L2"] = f"{loss_dict['l2']:.4f}"
                     if "lpips" in loss_dict:
                         postfix["LPIPS"] = f"{loss_dict['lpips']:.4f}"
                     if "g_loss" in loss_dict:
