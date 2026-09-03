@@ -1,5 +1,6 @@
 model:
   noise_predictor_path: "pretrained/noise_predictor_v3.safetensors"
+  residual_path: "pretrained/residual.safetensors"
   resshift_path: "pretrained/resshift_realsrx4_s4_v3.pth"
   vae_path: "pretrained/autoencoder_vq_f4.pth"
 
@@ -43,7 +44,12 @@ inference:
   num_steps: 4
   scale_factor: 4
 
-  use_noise_predictor: true
+  # Sampling pipeline:
+  # 'origin'          = original ResShift (standard Gaussian posterior noise),
+  # 'noise_predictor' = the predictor's output distribution replaces standard
+  #                     Gaussian as the posterior sampling noise,
+  # 'residual'        = residual corrector (checkpoint at model.residual_path)
+  mode: "noise_predictor"
 
   color_correction: true
 

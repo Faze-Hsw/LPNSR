@@ -224,13 +224,15 @@ class ImageSpliterTh:
 class NoisePredictorInference:
     """Noise Predictor Inference Class"""
 
-    def __init__(self, config_path, device="cuda"):
+    def __init__(self, config_path, device="cuda", mode=None):
         """
         Initialize the inference engine
 
         Args:
             config_path: Path to the config file
             device: Device ('cuda' or 'cpu')
+            mode: Sampling pipeline override ('origin', 'noise_predictor' or
+                  'residual'). None = read from config, fallback 'noise_predictor'.
         """
         self.config_path = Path(config_path).resolve()
         self.config_dir = self.config_path.parent
@@ -257,9 +259,18 @@ class NoisePredictorInference:
         self.chop_stride = self.config["inference"]["chop_stride"]
         self.chop_bs = self.config["inference"]["chop_bs"]
         self.use_amp = self.config["inference"]["use_amp"] and self.device == "cuda"
-        self.use_noise_predictor = self.config["inference"].get(
-            "use_noise_predictor", True
-        )
+
+        # Sampling pipeline:
+        # 'origin'          = original ResShift (standard Gaussian posterior noise)
+        # 'noise_predictor' = the predictor's output distribution replaces standard
+        #                     Gaussian as the posterior sampling noise
+        # 'residual'        = residual corrector (trainer2 checkpoints)
+        self.mode = mode or self.config["inference"].get("mode", "noise_predictor")
+        if self.mode not in ("origin", "noise_predictor", "residual"):
+            raise ValueError(
+                f"Unknown inference mode: {self.mode!r} (expected 'origin', "
+                "'noise_predictor' or 'residual')"
+            )
 
         # Initialize models
         self._init_models()
@@ -280,9 +291,7 @@ class NoisePredictorInference:
         print(
             f"  - Color correction: {'enabled' if self.color_correction else 'disabled'}"
         )
-        print(
-            f"  - Noise predictor: {'enabled' if self.use_noise_predictor else 'disabled'}"
-        )
+        print(f"  - Mode: {self.mode}")
 
     def _resolve_device(self, requested_device):
         """Resolve runtime device with safe CUDA fallback."""
@@ -393,9 +402,18 @@ class NoisePredictorInference:
             param.requires_grad = False
         print("  ✓ ResShift UNet loaded")
 
-        # 3. Load noise predictor
+        # 3. Load noise predictor (not needed for the original ResShift pipeline)
+        if self.mode == "origin":
+            self.noise_predictor = None
+            print("  - origin mode: noise predictor skipped (original ResShift)")
+            return
+
         print("  Loading noise predictor...")
         noise_predictor_config = self.config["noise_predictor"]
+
+        # The residual corrector (trainer2) is deterministic: single-head output.
+        # The GAN noise predictor keeps its probabilistic head (mean + logvar).
+        double_z = self.mode != "residual"
 
         # Load config if config file path is specified
         if "config_path" in noise_predictor_config:
@@ -429,6 +447,7 @@ class NoisePredictorInference:
                 patch_norm=config.get("patch_norm", False),
                 cond_lq=config.get("cond_lq", True),
                 lq_size=config.get("lq_size", 64),
+                double_z=double_z,
             )
         else:
             self.noise_predictor = create_noise_predictor(
@@ -460,12 +479,18 @@ class NoisePredictorInference:
                 patch_norm=noise_predictor_config.get("patch_norm", False),
                 cond_lq=noise_predictor_config.get("cond_lq", True),
                 lq_size=noise_predictor_config.get("lq_size", 64),
+                double_z=double_z,
             )
 
         # Load weights (safetensors = EMA weights saved by training; pth = torch checkpoint)
-        noise_predictor_path = (
-            self.project_root / self.config["model"]["noise_predictor_path"]
-        )
+        # residual mode loads the trainer2 corrector checkpoint from model.residual_path
+        if self.mode == "residual":
+            ckpt_rel = self.config["model"]["residual_path"]
+        else:
+            ckpt_rel = self.config["model"]["noise_predictor_path"]
+        noise_predictor_path = Path(ckpt_rel)
+        if not noise_predictor_path.is_absolute():
+            noise_predictor_path = self.project_root / ckpt_rel
         if noise_predictor_path.suffix == ".safetensors":
             from safetensors.torch import load_file
 
@@ -480,7 +505,7 @@ class NoisePredictorInference:
         self.noise_predictor.eval()
         for param in self.noise_predictor.parameters():
             param.requires_grad = False
-        print("  ✓ Noise predictor loaded")
+        print(f"  ✓ Noise predictor loaded (double_z={double_z})")
 
     def _init_diffusion(self):
         """
@@ -783,6 +808,15 @@ class NoisePredictorInference:
         Note: ResShift v3 is trained directly with 4 steps (timestep_respacing=None),
         so no timestep remapping is needed, directly use indices 0-3 as timesteps
 
+        Three pipelines (self.mode):
+          - 'origin': original ResShift, standard Gaussian posterior noise
+          - 'noise_predictor': the predictor's output distribution replaces standard
+            Gaussian as the posterior sampling noise; the posterior mean uses the
+            raw UNet estimate pred_x0
+          - 'residual': the corrector outputs a residual r; the posterior mean
+            uses the corrected estimate x0_corr = pred_x0 + r, and the final
+            output is x0_corr at t=0 (inference twin of trainer2)
+
         Args:
             lr_latent: LR image latent representation y (already VAE encoded)
             lr_image: Image-space LR image (used as UNet's lq condition)
@@ -798,6 +832,7 @@ class NoisePredictorInference:
             ::-1
         ]  # [num_steps-1, num_steps-2, ..., 0]
 
+        x0_final = None
         for i in indices:
             # Timestep index (0 to num_steps-1)
             t_tensor = torch.tensor([i] * lr_latent.shape[0], device=self.device).long()
@@ -809,27 +844,45 @@ class NoisePredictorInference:
             # ResShift v3 is trained directly with 4 steps, so timestep is directly passed as i
             pred_x0 = self.resshift_unet(x_t_normalized, t_tensor, lq=lr_image)
 
-            # 3. Calculate ResShift posterior distribution
+            # 3. Estimate used by the posterior mean
+            if self.mode == "residual":
+                # Corrector refines the UNet estimate: x0_corr = pred_x0 + r
+                r = self.noise_predictor(
+                    x_t_normalized, pred_x0, lr_image, t_tensor, sample_posterior=False
+                )
+                x0_for_posterior = pred_x0 + r
+                x0_final = x0_for_posterior
+            else:
+                x0_for_posterior = pred_x0
+
+            # 4. Calculate ResShift posterior distribution
             mean, variance, log_variance = self.q_posterior_mean_variance(
-                pred_x0, x_t, t_tensor
+                x0_for_posterior, x_t, t_tensor
             )
 
-            # 4. Generate noise
-            # Choose noise source for intermediate sampling based on use_noise_predictor
-            if self.use_noise_predictor:
+            if self.mode == "residual":
+                if i == 0:
+                    # t=0 boundary (coef1[0]=0, coef2[0]=1): the posterior mean
+                    # degenerates to the x_0 estimate itself, i.e. mean(0) = x0_corr.
+                    # Returning x0_corr IS the posterior mean (equivalent shortcut
+                    # that also skips the masked-out noise sampling).
+                    break
+                # Posterior noise is plain Gaussian (the corrector is deterministic)
+                noise = torch.randn_like(x_t)
+            elif self.mode == "noise_predictor":
                 # Use noise predictor to predict noise
                 noise = self.noise_predictor(
                     x_t_normalized, pred_x0, lr_image, t_tensor, sample_posterior=True
                 )
             else:
-                # Use random Gaussian noise
+                # origin: standard Gaussian noise (original ResShift)
                 noise = torch.randn_like(x_t)
 
             # 5. Sample x_{t-1}: add noise when t>0, use mean directly when t=0
             nonzero_mask = (t_tensor != 0).float().view(-1, 1, 1, 1)
             x_t = mean + nonzero_mask * torch.exp(0.5 * log_variance) * noise
 
-        return x_t
+        return x0_final if self.mode == "residual" else x_t
 
     def pad_image(self, img, multiple=64):
         """
@@ -1021,6 +1074,18 @@ def get_parser():
     parser.add_argument(
         "--device", type=str, default="cuda", choices=["cuda", "cpu"], help="Device"
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default=None,
+        choices=["origin", "noise_predictor", "residual"],
+        help=(
+            "Sampling pipeline: 'origin' = original ResShift (standard Gaussian "
+            "noise), 'noise_predictor' = predictor's output distribution replaces "
+            "standard Gaussian (default), 'residual' = residual corrector trained "
+            "by trainer2"
+        ),
+    )
 
     return parser
 
@@ -1040,13 +1105,18 @@ def main():
     print("=" * 60)
 
     # Initialize inference engine
-    inferencer = NoisePredictorInference(args.config, device=args.device)
+    inferencer = NoisePredictorInference(
+        args.config, device=args.device, mode=args.mode
+    )
 
     # Print final inference strategy
     print("\nInference strategy:")
-    print(
-        f"  - Intermediate sampling: {'Noise predictor' if inferencer.use_noise_predictor else 'Random Gaussian noise'}"
-    )
+    if inferencer.mode == "residual":
+        print("  - Pipeline: residual corrector (deterministic, per-step refinement)")
+    elif inferencer.mode == "noise_predictor":
+        print("  - Intermediate sampling: noise predictor distribution")
+    else:
+        print("  - Intermediate sampling: standard Gaussian (original ResShift)")
 
     # Execute inference
     inferencer.inference(args.input, args.output)

@@ -29,3 +29,4 @@ traindata/
 testdata/
 experiments/
 pretrained/
+test_results/
